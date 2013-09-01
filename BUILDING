@@ -1,0 +1,2 @@
+g++ main.cpp wfLZ.c -o wfLZEx
+
