@@ -1,2 +1,2 @@
-g++ main.cpp wfLZ.c -o wfLZEx
+g++ main.cpp wfLZ.c -o wfLZEx -static-libgcc -static-libstdc++
 
