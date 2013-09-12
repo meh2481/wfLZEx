@@ -6,6 +6,43 @@
 #include <cstdio>
 using namespace std;
 
+int chunkDecompress()
+{
+	vector<uint8_t> vData;
+	while(!cin.eof())
+	{
+		int val = cin.get();
+		if(val != EOF)
+			vData.push_back(val);
+	}
+	
+	cerr<< "Got data" << endl;
+	
+	uint32_t* chunk = NULL;
+	const uint32_t decompressedSize = wfLZ_GetDecompressedSize( vData.data() );
+	uint8_t* dst = ( uint8_t* )malloc( decompressedSize );
+	cerr << "size: " << decompressedSize << endl;
+	uint32_t offset = 0;
+	int count = 0;
+	while( uint8_t* compressedBlock = wfLZ_ChunkDecompressLoop( vData.data(), &chunk ) )
+	{
+		cerr << "Loop " << count << endl;
+		wfLZ_Decompress( compressedBlock, dst + offset );
+		cerr << "thing" << endl;
+		const uint32_t blockSize = wfLZ_GetDecompressedSize( compressedBlock );
+		offset += blockSize;
+		cerr << "blocksize: " << blockSize<<endl;
+	}
+	
+	cerr << "Write dest" << endl;
+	for(int i = 0; i < decompressedSize; i++)
+		cout << dst[i];
+	
+	free(dst);
+	
+	return 0;
+}
+
 int main(int argc, char** argv)
 {
 	bool bCompress = false;
@@ -17,6 +54,8 @@ int main(int argc, char** argv)
 			bCompress = true;
 		else if(s == "decompress")
 			bCompress = false;
+		else if(s == "chunk")
+			return chunkDecompress();
 	}
 
 	if(!bCompress)
@@ -30,10 +69,12 @@ int main(int argc, char** argv)
 		}
 
 		uint32_t size = wfLZ_GetDecompressedSize(vData.data());
-
+		cerr<<"Size: " << size << endl;
 		uint8_t* out = (uint8_t*) malloc(size);
+		cerr <<"pre"<< endl;
 		wfLZ_Decompress(vData.data(), out);
 		
+		cerr <<"post"<< endl;
 		for(int i = 0; i < size; i++)
 			cout << out[i];
 

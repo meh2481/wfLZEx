@@ -1,3 +1,6 @@
+#ifndef WF_RESTRICT
+	#define WF_RESTRICT
+#endif
 #include "wfLZ.h"
 
 //
@@ -476,7 +479,7 @@ uint32_t wfLZ_GetCompressedSize( const uint8_t* const in )
 
 //! wfLZ_Decompress()
 
-void wfLZ_Decompress( const uint8_t* const in, uint8_t* const out )
+void wfLZ_Decompress( const uint8_t* WF_RESTRICT const in, uint8_t* WF_RESTRICT const out )
 {
 	wfLZ_Header* header = ( wfLZ_Header* )in;
 	uint8_t* dst = out;
