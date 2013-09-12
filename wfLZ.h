@@ -2,6 +2,8 @@
 #ifndef WF_LZ_H
 #define WF_LZ_H
 
+#define WF_RESTRICT	//Supress GCC errors
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,7 +64,7 @@ extern uint32_t wfLZ_GetCompressedSize( const uint8_t* const in );
 
 //! wfLZ_Decompress()
 /*! Use wfLZ_GetDecompressedSize to allocate an output buffer of the correct size */
-extern void wfLZ_Decompress( const uint8_t*  const in, uint8_t*  const out );
+extern void wfLZ_Decompress( const uint8_t* WF_RESTRICT const in, uint8_t* WF_RESTRICT const out );
 
 //! wfLZ_GetHeaderSize()
 /*!

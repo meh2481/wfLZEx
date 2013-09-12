@@ -1,5 +1,6 @@
 # Object files
 *.o
+*.d
 
 # Libraries
 *.lib
@@ -15,3 +16,9 @@
 *.exe
 *.out
 *.app
+
+# Files pertaining to compression/decompression
+*.bak
+*.bin
+*.png
+*.anb
