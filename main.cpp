@@ -5,117 +5,50 @@
 #include <stdlib.h>
 #include <cstdio>
 #include <squish.h>
-#include "png.h"
 #include <windows.h>
+#include "FreeImage.h"
+#include <list>
+#include <cmath>
 using namespace std;
-
-bool convertToPNG(const char* cFilename, uint8_t* data, uint32_t w, uint32_t h)
-{
-  FILE          *png_file;
-  png_struct    *png_ptr = NULL;
-  png_info      *info_ptr = NULL;
-  png_byte      *png_pixels = NULL;
-  png_byte      **row_pointers = NULL;
-  png_uint_32   row_bytes;
-
-  int           color_type = PNG_COLOR_TYPE_RGB_ALPHA;
-  int           bit_depth = 8;
-  int           channels = 4;
-  
-  png_file = fopen(cFilename, ("wb"));
-  if(png_file == NULL)
-  {
-    cout << "PNG file " << (cFilename) << " NULL" << endl;
-	return false;
-  }
-  setvbuf ( png_file , NULL , _IOFBF , 4096 );
-  
-  //Read in the image
-  size_t sizeToRead = w * h * channels * bit_depth/8;
-  png_pixels = data;
-
-  // prepare the standard PNG structures 
-  png_ptr = png_create_write_struct (PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-  if (!png_ptr)
-  {
-    cout << "png_ptr Null" << endl;
-	fclose(png_file);
-	return false;
-  }
-	
-  info_ptr = png_create_info_struct (png_ptr);
-  if (!info_ptr)
-  {
-    cout << "Info ptr null" << endl;
-    png_destroy_write_struct (&png_ptr, (png_infopp) NULL);
-	fclose(png_file);
-	return false;
-  }
-
-  // setjmp() must be called in every function that calls a PNG-reading libpng function
-  if (setjmp (png_jmpbuf(png_ptr)))
-  {
-    cout << "unable to setjmp" << endl;
-    png_destroy_write_struct (&png_ptr, (png_infopp) NULL);
-	fclose(png_file);
-	return false;
-  }
-
-  // initialize the png structure
-  png_init_io (png_ptr, png_file);
-
-  // we're going to write more or less the same PNG as the input file
-  png_set_IHDR (png_ptr, info_ptr, w, h, bit_depth, color_type, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
-
-  // write the file header information
-  png_write_info (png_ptr, info_ptr);
-
-  // if needed we will allocate memory for an new array of row-pointers
-  if (row_pointers == (png_byte**) NULL)
-  {
-    if ((row_pointers = (png_byte **) malloc (h * sizeof (png_bytep))) == NULL)
-    {
-      png_destroy_write_struct (&png_ptr, (png_infopp) NULL);
-	  cout << "Error allocating row pointers" << endl;
-	  fclose(png_file);
-	  return false;
-    }
-  }
-
-  // row_bytes is the width x number of channels x (bit-depth / 8)
-  row_bytes = w * channels * ((bit_depth <= 8) ? 1 : 2);
-  
-  // set the individual row_pointers to point at the correct offsets
-  for (unsigned int i = 0; i < (h); i++)
-    row_pointers[i] = png_pixels + i * row_bytes;
-
-  // write out the entire image data in one call
-  png_write_image (png_ptr, row_pointers);
-
-  // write the additional chuncks to the PNG file (not really needed)
-  png_write_end (png_ptr, info_ptr);
-
-  // clean up after the write, and free any memory allocated
-  png_destroy_write_struct (&png_ptr, (png_infopp) NULL);
-
-  if (row_pointers != (png_byte**) NULL)
-    free (row_pointers);
-	
-  //Close the file
-  fclose(png_file);
-
-  return true;
-}
-
 
 typedef struct
 {
-	uint32_t imgType;
-	uint32_t imgW;
-	uint32_t imgH;
-	uint32_t mipFlags;	//0 means no mips, 1 means that this block contains two images
-	uint32_t mipPos[4];	//offset for texture comes later
-} anbHeader;
+	uint32_t unknown0;
+	uint32_t width;
+	uint32_t height;
+	uint32_t unknown1[5];
+	//uint8_t data[]
+} texHeader;
+
+typedef struct  
+{
+	int      unknown0[4];
+	uint64_t texOffset; // offset from start of file to TexDesc
+	int      texDataSize;
+	int      unknown1;
+	uint64_t pieceOffset; // offset from start of file to PiecesDesc
+} FrameDesc;
+
+typedef struct
+{
+	float x;
+	float y;
+} Vec2;
+
+typedef struct 
+{
+	Vec2 topLeft;
+	Vec2 topLeftUV;
+	Vec2 bottomRight;
+	Vec2 bottomRightUV;
+} piece;
+
+typedef struct
+{
+	uint32_t numPieces;
+	//piece[]
+} PiecesDesc;
+
 
 int splitImages(const char* cFilename)
 {
@@ -135,14 +68,28 @@ int splitImages(const char* cFilename)
 	
 	//Parse through, splitting out before each ZLFW header
 	int iCurFile = 0;
-	for(int i = 0; i < fileSize; i++)	//Definitely not the fastest way to do it... but I don't care
+	uint64_t startPos = 0;
+	for(uint64_t i = 0; i < fileSize; i++)	//Definitely not the fastest way to do it... but I don't care
 	{
 		if(memcmp ( &(vData.data()[i]), "ZLFW", 4 ) == 0)	//Found another file
 		{
-			int headerPos = i - sizeof(anbHeader);
-			anbHeader ah;
-			memcpy ( &ah, &(vData.data()[headerPos]), sizeof(anbHeader) );
-			
+			uint64_t headerPos = i - sizeof(texHeader);
+			texHeader th;
+			memcpy ( &th, &(vData.data()[headerPos]), sizeof(texHeader) );
+			if(iCurFile == 0)	//First one
+				startPos = i;
+			FrameDesc fd;
+			for(int k = startPos - sizeof(texHeader) - sizeof(FrameDesc); k > 0; k -= 4)
+			{
+				memcpy(&fd, &(vData.data()[k]), sizeof(FrameDesc));
+				if(fd.texOffset != headerPos) continue;
+				//Sanity check
+				if(fd.texDataSize > 6475888) continue;
+				if(fd.texOffset == 0 || fd.pieceOffset == 0) continue;
+				
+				//Ok, found our header
+				break;
+			}
 			uint32_t* chunk = NULL;
 			const uint32_t decompressedSize = wfLZ_GetDecompressedSize( &(vData.data()[i]) );
 			uint8_t* dst = ( uint8_t* )malloc( decompressedSize );
@@ -157,18 +104,16 @@ int splitImages(const char* cFilename)
 			
 			uint8_t* color = (uint8_t*)malloc(decompressedSize * 8);
 			
-			squish::DecompressImage( color, ah.imgW, ah.imgH, dst, squish::kDxt1 );
-			char cOutName[256];
-			sprintf(cOutName, "output/%s-%d.png", cFilename, ++iCurFile);
+			squish::DecompressImage( color, th.width, th.height, dst, squish::kDxt1 );
 			
 			//Create second image
 			uint8_t* mul = (uint8_t*)malloc(decompressedSize * 8);
-			squish::DecompressImage( mul, ah.imgW, ah.imgH, dst + decompressedSize/2, squish::kDxt1 );	//Second image starts halfway through decompressed data
+			squish::DecompressImage( mul, th.width, th.height, dst + decompressedSize/2, squish::kDxt1 );	//Second image starts halfway through decompressed data
 			
 			
 			uint8_t* dest_final = (uint8_t*)malloc(decompressedSize * 8);
 			//Multiply together
-			for(int j = 0; j < ah.imgW * ah.imgH * 4; j+=4)
+			for(int j = 0; j < th.width * th.height * 4; j+=4)
 			{
 				if(color[j+3] != 255)
 				{
@@ -186,14 +131,121 @@ int splitImages(const char* cFilename)
 				}				
 			}
 			
-			//Save result to PNG
-			convertToPNG(cOutName, dest_final, ah.imgW, ah.imgH);
+			//Read in pieces
+			PiecesDesc pd;
+			Vec2 maxul;
+			Vec2 maxbr;
+			maxul.x = maxul.y = maxbr.x = maxbr.y = 0;
+			memcpy(&pd, &(vData.data()[fd.pieceOffset]), sizeof(PiecesDesc));
+			list<piece> pieces;
+			for(uint32_t j = 0; j < pd.numPieces; j++)
+			{
+				piece p;
+				memcpy(&p, &(vData.data()[fd.pieceOffset+j*sizeof(piece)+sizeof(PiecesDesc)]), sizeof(piece));
+				//Store our maximum values, so we know how large the image is
+				if(p.topLeft.x < maxul.x)
+					maxul.x = p.topLeft.x;
+				if(p.topLeft.y > maxul.y)
+					maxul.y = p.topLeft.y;
+				if(p.bottomRight.x > maxbr.x)
+					maxbr.x = p.bottomRight.x;
+				if(p.bottomRight.y < maxbr.y)
+					maxbr.y = p.bottomRight.y;
+				pieces.push_back(p);
+			}
 			
+			Vec2 OutputSize;
+			Vec2 CenterPos;
+			OutputSize.x = -maxul.x + maxbr.x;
+			OutputSize.y = maxul.y - maxbr.y;
+			CenterPos.x = -maxul.x;
+			CenterPos.y = maxul.y;
+			OutputSize.x = uint32_t(OutputSize.x);
+			OutputSize.y = uint32_t(OutputSize.y);
+			
+			FIBITMAP* result = FreeImage_Allocate(OutputSize.x+6, OutputSize.y+6, 32);
+			
+			//Create image from this set of pixels
+			FIBITMAP* curImg = FreeImage_Allocate(th.width, th.height, 32);
+			FREE_IMAGE_TYPE image_type = FreeImage_GetImageType(curImg);
+			if(image_type == FIT_BITMAP)
+			{
+				int curPos = 0;
+				unsigned pitch = FreeImage_GetPitch(curImg);
+				BYTE* bits = (BYTE*)FreeImage_GetBits(curImg);
+				bits += pitch * th.height - pitch;
+				for(int y = th.height-1; y >= 0; y--)
+				{
+					BYTE* pixel = (BYTE*)bits;
+					for(int x = 0; x < th.width; x++)
+					{
+						pixel[FI_RGBA_RED] = dest_final[curPos++];
+						pixel[FI_RGBA_GREEN] = dest_final[curPos++];
+						pixel[FI_RGBA_BLUE] = dest_final[curPos++];
+						pixel[FI_RGBA_ALPHA] = dest_final[curPos++];
+						pixel += 4;
+					}
+					bits -= pitch;
+				}
+			}
+			
+			//Patch image together from pieces
+			for(list<piece>::iterator lpi = pieces.begin(); lpi != pieces.end(); lpi++)
+			{
+				FIBITMAP* imgPiece = FreeImage_Copy(curImg, 
+													floor((lpi->topLeftUV.x) * th.width - 0.001), floor((lpi->topLeftUV.y) * th.height - 0.001), 
+													ceil((lpi->bottomRightUV.x) * th.width + 0.001), ceil((lpi->bottomRightUV.y) * th.height + 0.001));
+				
+				//Since pasting doesn't allow you to post an image onto a particular position of another, do that by hand
+				int curPos = 0;
+				int srcW = FreeImage_GetWidth(imgPiece);
+				int srcH = FreeImage_GetHeight(imgPiece);
+				unsigned pitch = FreeImage_GetPitch(imgPiece);
+				unsigned destpitch = FreeImage_GetPitch(result);
+				BYTE* bits = (BYTE*)FreeImage_GetBits(imgPiece);
+				BYTE* destBits = (BYTE*)FreeImage_GetBits(result);
+				Vec2 DestPos = CenterPos;
+				DestPos.x += lpi->topLeft.x;
+				//DestPos.y -= lpi->topLeft.y;
+				DestPos.y = OutputSize.y - srcH;
+				DestPos.y -= CenterPos.y;
+				DestPos.y += lpi->topLeft.y;
+				DestPos.x = (unsigned int)(DestPos.x);
+				DestPos.y = ceil(DestPos.y);
+				for(int y = 0; y < srcH; y++)
+				{
+					BYTE* pixel = bits;
+					BYTE* destpixel = destBits;
+					destpixel += (unsigned)((DestPos.y + y + 3)) * destpitch;
+					destpixel += (unsigned)((DestPos.x + 3) * 4);
+					for(int x = 0; x < srcW; x++)
+					{
+						destpixel[FI_RGBA_RED] = pixel[FI_RGBA_RED];
+						destpixel[FI_RGBA_GREEN] = pixel[FI_RGBA_GREEN];
+						destpixel[FI_RGBA_BLUE] = pixel[FI_RGBA_BLUE];
+						//if(pixel[FI_RGBA_ALPHA] != 0)
+							destpixel[FI_RGBA_ALPHA] = pixel[FI_RGBA_ALPHA];
+						pixel += 4;
+						destpixel += 4;
+					}
+					bits += pitch;
+				}
+				
+				FreeImage_Unload(imgPiece);
+			}			
 			
 			free(dst);
 			free(color);
 			free(mul);
 			free(dest_final);
+			char cOutName[256];
+			sprintf(cOutName, "output/%s-%d.png", cFilename, ++iCurFile);
+			FreeImage_Save(FIF_PNG, result, cOutName);
+			FreeImage_Unload(result);
+			FreeImage_Unload(curImg);
+			
+			//TODO: Remove. For testing purposes, we'll only do one image because faster
+			//break;
 		}
 	}
 	return 0;
@@ -201,10 +253,12 @@ int splitImages(const char* cFilename)
 
 int main(int argc, char** argv)
 {
+	FreeImage_Initialise();
 	CreateDirectory(TEXT("output"), NULL);
 	for(int i = 1; i < argc; i++)
 	{
 		splitImages(argv[i]);
 	}
+	FreeImage_DeInitialise();
 	return 0;
 }

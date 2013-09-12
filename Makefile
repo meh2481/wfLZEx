@@ -1,7 +1,7 @@
 SHELL=C:/Windows/System32/cmd.exe
 objects = main.o wfLZ.o
-LIBPATH = -L./
-LIB = -lsquish -lpng -lzlib
+LIBPATH = -L./lib
+LIB = -lsquish -lpng -lzlib -lFreeImage
 HEADERPATH = -I./include
 STATICGCC = -static-libgcc -static-libstdc++
 
