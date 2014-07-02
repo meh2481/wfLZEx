@@ -1,0 +1,19 @@
+objects = main.o wfLZ.o
+LIBPATH = -L./lib/linux64
+LIB = -lsquish -lfreeimage
+HEADERPATH = -I./include
+STATICGCC = -static-libgcc -static-libstdc++
+
+all : wfLZEx
+ 
+wfLZEx : $(objects)
+	g++ -Wall -O2 -s -o $@ $(objects) $(LIBPATH) $(LIB) $(STATICGCC) $(HEADERPATH)
+	
+%.o: %.cpp
+	g++ -O2 -c -MMD -s -o $@ $< $(HEADERPATH)
+
+-include $(objects:.o=.d)
+
+.PHONY : clean
+clean :
+	rm -rf wfLZEx *.o *.d

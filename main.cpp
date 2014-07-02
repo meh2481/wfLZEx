@@ -5,10 +5,13 @@
 #include <stdlib.h>
 #include <cstdio>
 #include <squish.h>
-#include <windows.h>
+#ifdef _WIN32
+	#include <windows.h>
+#endif
 #include "FreeImage.h"
 #include <list>
 #include <cmath>
+#include <cstring>
 using namespace std;
 
 int g_DecompressFlags;
@@ -217,7 +220,7 @@ int splitImages(const char* cFilename)
 	size_t fileSize = ftell( fh );
 	fseek( fh, 0, SEEK_SET );
 	vData.reserve( fileSize );
-	fread( vData.data(), fileSize, 1, fh );
+	size_t amt = fread( vData.data(), fileSize, 1, fh );
 	fclose( fh );
 	
 	//Parse through, splitting out before each ZLFW header
@@ -311,6 +314,7 @@ int splitImages(const char* cFilename)
 				
 				char cOutName[256];
 				sprintf(cOutName, "output/%s-%d.png", cFilename, iCurFile);
+				cout << "Saving " << cOutName << endl;
 				FreeImage_Save(FIF_PNG, result, cOutName);
 				FreeImage_Unload(result);
 				free(dest_final);
@@ -324,6 +328,7 @@ int splitImages(const char* cFilename)
 				{
 					FIBITMAP* result = PieceImage(color, pieces, maxul, maxbr, th, false, false);
 					sprintf(cOutName, "output/%s-%d-col.png", cFilename, iCurFile);
+					cout << "Saving " << cOutName << endl;
 					FreeImage_Save(FIF_PNG, result, cOutName);
 					FreeImage_Unload(result);
 				}
@@ -333,6 +338,7 @@ int splitImages(const char* cFilename)
 				{
 					FIBITMAP* result = PieceImage(mul, pieces, maxul, maxbr, th, true);
 					sprintf(cOutName, "output/%s-%d-mul.png", cFilename, iCurFile);
+					cout << "Saving " << cOutName << endl;
 					FreeImage_Save(FIF_PNG, result, cOutName);
 					FreeImage_Unload(result);
 				}
@@ -348,6 +354,7 @@ int splitImages(const char* cFilename)
 				{
 					result = imageFromPixels(color, th.width, th.height);
 					sprintf(cOutName, "output/%s-%d-col.png", cFilename, iCurFile);
+					cout << "Saving " << cOutName << endl;
 					FreeImage_Save(FIF_PNG, result, cOutName);
 					FreeImage_Unload(result);
 				}
@@ -357,6 +364,7 @@ int splitImages(const char* cFilename)
 				{
 					result = imageFromPixels(mul, th.width, th.height);
 					sprintf(cOutName, "output/%s-%d-mul.png", cFilename, iCurFile);
+					cout << "Saving " << cOutName << endl;
 					FreeImage_Save(FIF_PNG, result, cOutName);
 					FreeImage_Unload(result);
 				}
@@ -370,6 +378,7 @@ int splitImages(const char* cFilename)
 				
 				char cOutName[256];
 				sprintf(cOutName, "output/%s-%d.png", cFilename, iCurFile);
+				cout << "Saving " << cOutName << endl;
 				FreeImage_Save(FIF_PNG, result, cOutName);
 				FreeImage_Unload(result);
 				
@@ -393,7 +402,11 @@ int main(int argc, char** argv)
 	g_bPieceTogether = true;
 	g_bColOnly = g_bMulOnly = false;
 	FreeImage_Initialise();
+#ifdef _WIN32
 	CreateDirectory(TEXT("output"), NULL);
+#else
+	int result = system("mkdir -p output");
+#endif
 	list<string> sFilenames;
 	//Parse commandline
 	for(int i = 1; i < argc; i++)
