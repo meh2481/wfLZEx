@@ -58,11 +58,11 @@ typedef struct
 	//piece[]
 } PiecesDesc;
 
-#define TEXTURE_TYPE_UNKNOWN1		1
-#define TEXTURE_TYPE_UNCOMPRESSED	2
-#define TEXTURE_TYPE_UNKNOWN2		3
-#define TEXTURE_TYPE_2X_DXT1		5
-#define TEXTURE_TYPE_UNKNOWN3		6
+#define TEXTURE_TYPE_UNKNOWN1			1
+#define TEXTURE_TYPE_UNCOMPRESSED		2
+#define TEXTURE_TYPE_DXT5_COL			3
+#define TEXTURE_TYPE_DXT1_COL_MUL		5
+#define TEXTURE_TYPE_DXT5_COL_DXT1_MUL	6
 
 int powerof2(int orig)
 {
@@ -255,7 +255,7 @@ int splitImages(const char* cFilename)
 			texHeader th;
 			memcpy(&th, &(vData.data()[headerPos]), sizeof(texHeader));
 			
-			//if(th.type != TEXTURE_TYPE_2X_DXT1)	//Type of image we don't support; skip
+			//if(th.type != TEXTURE_TYPE_DXT1_COL_MUL)	//Type of image we don't support; skip
 			//{
 			//	cout << "Tex header: type=" << th.type << ", width=" << th.width << ", height=" << th.height << endl;
 				//continue;
@@ -272,7 +272,7 @@ int splitImages(const char* cFilename)
 					memcpy(&fd, &(vData.data()[k]), sizeof(FrameDesc));
 					if(fd.texOffset != headerPos) continue;
 					//Sanity check
-					if(fd.texDataSize > 6475888) continue;
+					if(fd.texDataSize > 6475888) continue;	//TODO: Test to make sure data size matches
 					if(fd.texOffset == 0 || fd.pieceOffset == 0) continue;
 					
 					//Ok, found our header
@@ -296,7 +296,7 @@ int splitImages(const char* cFilename)
 			//Decompress image
 			uint8_t* color = NULL;
 			uint8_t* mul = NULL;
-			if(th.type == TEXTURE_TYPE_2X_DXT1)
+			if(th.type == TEXTURE_TYPE_DXT1_COL_MUL)
 			{
 				//Create color image
 				color = (uint8_t*)malloc(decompressedSize * 8);
@@ -310,9 +310,10 @@ int splitImages(const char* cFilename)
 			}
 			else if(th.type == TEXTURE_TYPE_UNCOMPRESSED)
 			{
-				//TODO
-				cout << "TODO" << endl;
-				continue;
+				color = (uint8_t*)malloc(th.width * th.height * 4);
+				uint8_t* dest_ptr = color;
+				for(uint32_t  ctr = 0; ctr < th.width * th.height * 4; ctr++)
+					*dest_ptr++ = dst[ctr];
 			}
 			else
 			{
@@ -348,8 +349,39 @@ int splitImages(const char* cFilename)
 				}
 			}
 			
+			uint8_t* dest_final = NULL;
+			if(color != NULL && mul != NULL)
+			{
+				dest_final = (uint8_t*)malloc(decompressedSize * 8);
+				multiply(dest_final, color, mul, th);
+				free(color);
+				free(mul);
+			}
+			else if(color != NULL)
+				dest_final = color;
+			else if(mul != NULL)
+				dest_final = mul;
+			else	//Should be unreachable
+			{
+				free(dst);
+				continue;
+			}
+			
+			FIBITMAP* result = NULL;
+			if(g_bPieceTogether)
+				result = PieceImage(dest_final, pieces, maxul, maxbr, th);
+			else
+				result = imageFromPixels(dest_final, th.width, th.height);
+			
+			ostringstream oss;
+			oss << "output/" << sName << "_" << iCurFile+1 << ".png";
+			cout << "Saving " << oss.str() << endl;
+			FreeImage_Save(FIF_PNG, result, oss.str().c_str());
+			FreeImage_Unload(result);
+			
+			
 			//Merge images together and piece them up
-			if(!g_bSeparate && g_bPieceTogether)
+			/*if(!g_bSeparate && g_bPieceTogether)
 			{
 				uint8_t* dest_final = (uint8_t*)malloc(decompressedSize * 8);
 				multiply(dest_final, color, mul, th);
@@ -427,11 +459,12 @@ int splitImages(const char* cFilename)
 				FreeImage_Unload(result);
 				
 				free(dest_final);
-			}
+			}*/
 			//Free allocated memory
 			free(dst);
-			free(color);
-			free(mul);
+			free(dest_final);
+			//free(color);
+			//free(mul);
 			
 			iCurFile++;
 		}
