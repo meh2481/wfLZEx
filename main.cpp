@@ -22,7 +22,7 @@ bool g_bMulOnly;
 
 typedef struct
 {
-	uint32_t unknown0;
+	uint32_t type;
 	uint32_t width;
 	uint32_t height;
 	uint32_t unknown1[5];
@@ -57,6 +57,12 @@ typedef struct
 	uint32_t numPieces;
 	//piece[]
 } PiecesDesc;
+
+#define TEXTURE_TYPE_UNKNOWN1		1
+#define TEXTURE_TYPE_UNCOMPRESSED	2
+#define TEXTURE_TYPE_UNKNOWN2		3
+#define TEXTURE_TYPE_2X_DXT1		5
+#define TEXTURE_TYPE_UNKNOWN3		6
 
 int powerof2(int orig)
 {
@@ -222,6 +228,20 @@ int splitImages(const char* cFilename)
 	vData.reserve( fileSize );
 	size_t amt = fread( vData.data(), fileSize, 1, fh );
 	fclose( fh );
+	cout << "Splitting images from file " << cFilename << endl;
+	
+	//Figure out what we'll be naming the images
+	string sName = cFilename;
+	//First off, strip off filename extension
+	size_t namepos = sName.find(".anb");
+	if(namepos != string::npos)
+		sName.erase(namepos);
+	//Next, strip off any file path before it
+	namepos = sName.rfind('/');
+	if(namepos == string::npos)
+		namepos = sName.rfind('\\');
+	if(namepos != string::npos)
+		sName.erase(0, namepos+1);
 	
 	//Parse through, splitting out before each ZLFW header
 	int iCurFile = 0;
@@ -233,7 +253,13 @@ int splitImages(const char* cFilename)
 			//Get texture header
 			uint64_t headerPos = i - sizeof(texHeader);
 			texHeader th;
-			memcpy ( &th, &(vData.data()[headerPos]), sizeof(texHeader) );
+			memcpy(&th, &(vData.data()[headerPos]), sizeof(texHeader));
+			
+			//if(th.type != TEXTURE_TYPE_2X_DXT1)	//Type of image we don't support; skip
+			//{
+			//	cout << "Tex header: type=" << th.type << ", width=" << th.width << ", height=" << th.height << endl;
+				//continue;
+			//}
 				
 			//Search for frame header if we're going to be piecing these together
 			FrameDesc fd;
@@ -267,15 +293,33 @@ int splitImages(const char* cFilename)
 				offset += blockSize;
 			}
 			
-			//Create color image
-			uint8_t* color = (uint8_t*)malloc(decompressedSize * 8);
-			if(!g_bMulOnly)
-				squish::DecompressImage( color, th.width, th.height, dst, g_DecompressFlags );
-			
-			//Create multiply image
-			uint8_t* mul = (uint8_t*)malloc(decompressedSize * 8);
-			if(!g_bColOnly)
-				squish::DecompressImage( mul, th.width, th.height, dst + decompressedSize/2, g_DecompressFlags );	//Second image starts halfway through decompressed data
+			//Decompress image
+			uint8_t* color = NULL;
+			uint8_t* mul = NULL;
+			if(th.type == TEXTURE_TYPE_2X_DXT1)
+			{
+				//Create color image
+				color = (uint8_t*)malloc(decompressedSize * 8);
+				if(!g_bMulOnly)
+					squish::DecompressImage( color, th.width, th.height, dst, g_DecompressFlags );
+				
+				//Create multiply image
+				mul = (uint8_t*)malloc(decompressedSize * 8);
+				if(!g_bColOnly)
+					squish::DecompressImage( mul, th.width, th.height, dst + decompressedSize/2, g_DecompressFlags );	//Second image starts halfway through decompressed data
+			}
+			else if(th.type == TEXTURE_TYPE_UNCOMPRESSED)
+			{
+				//TODO
+				cout << "TODO" << endl;
+				continue;
+			}
+			else
+			{
+				cout << "Warning: skipping unknown image type " << th.type << endl;
+				delete dst;
+				continue;
+			}
 			
 			//Read in pieces
 			Vec2 maxul;
@@ -313,7 +357,7 @@ int splitImages(const char* cFilename)
 				FIBITMAP* result = PieceImage(dest_final, pieces, maxul, maxbr, th);
 				
 				char cOutName[256];
-				sprintf(cOutName, "output/%s-%d.png", cFilename, iCurFile);
+				sprintf(cOutName, "output/%s_%d.png", sName.c_str(), iCurFile);
 				cout << "Saving " << cOutName << endl;
 				FreeImage_Save(FIF_PNG, result, cOutName);
 				FreeImage_Unload(result);
@@ -327,7 +371,7 @@ int splitImages(const char* cFilename)
 				if(!g_bMulOnly)
 				{
 					FIBITMAP* result = PieceImage(color, pieces, maxul, maxbr, th, false, false);
-					sprintf(cOutName, "output/%s-%d-col.png", cFilename, iCurFile);
+					sprintf(cOutName, "output/%s_%d-col.png", sName.c_str(), iCurFile);
 					cout << "Saving " << cOutName << endl;
 					FreeImage_Save(FIF_PNG, result, cOutName);
 					FreeImage_Unload(result);
@@ -337,7 +381,7 @@ int splitImages(const char* cFilename)
 				if(!g_bColOnly)
 				{
 					FIBITMAP* result = PieceImage(mul, pieces, maxul, maxbr, th, true);
-					sprintf(cOutName, "output/%s-%d-mul.png", cFilename, iCurFile);
+					sprintf(cOutName, "output/%s_%d-mul.png", sName.c_str(), iCurFile);
 					cout << "Saving " << cOutName << endl;
 					FreeImage_Save(FIF_PNG, result, cOutName);
 					FreeImage_Unload(result);
@@ -353,7 +397,7 @@ int splitImages(const char* cFilename)
 				if(!g_bMulOnly)
 				{
 					result = imageFromPixels(color, th.width, th.height);
-					sprintf(cOutName, "output/%s-%d-col.png", cFilename, iCurFile);
+					sprintf(cOutName, "output/%s_%d-col.png", sName.c_str(), iCurFile);
 					cout << "Saving " << cOutName << endl;
 					FreeImage_Save(FIF_PNG, result, cOutName);
 					FreeImage_Unload(result);
@@ -363,7 +407,7 @@ int splitImages(const char* cFilename)
 				if(!g_bColOnly)
 				{
 					result = imageFromPixels(mul, th.width, th.height);
-					sprintf(cOutName, "output/%s-%d-mul.png", cFilename, iCurFile);
+					sprintf(cOutName, "output/%s_%d-mul.png", sName.c_str(), iCurFile);
 					cout << "Saving " << cOutName << endl;
 					FreeImage_Save(FIF_PNG, result, cOutName);
 					FreeImage_Unload(result);
@@ -377,7 +421,7 @@ int splitImages(const char* cFilename)
 				FIBITMAP* result = imageFromPixels(dest_final, th.width, th.height);
 				
 				char cOutName[256];
-				sprintf(cOutName, "output/%s-%d.png", cFilename, iCurFile);
+				sprintf(cOutName, "output/%s_%d.png", sName.c_str(), iCurFile);
 				cout << "Saving " << cOutName << endl;
 				FreeImage_Save(FIF_PNG, result, cOutName);
 				FreeImage_Unload(result);
