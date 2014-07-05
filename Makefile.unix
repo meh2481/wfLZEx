@@ -4,13 +4,21 @@ LIB = -lsquish -lfreeimage
 HEADERPATH = -I./include
 STATICGCC = -static-libgcc -static-libstdc++
 
+ifeq ($(BUILD),release)  
+# "Release" build - optimization, and no debug symbols
+	CXXFLAGS += -O2 -Os -s -DNDEBUG 
+else
+# "Debug" build - no optimization, and debugging symbols
+	CXXFLAGS += -g -ggdb -DDEBUG
+endif
+
 all : wfLZEx
  
 wfLZEx : $(objects)
-	g++ -Wall -O2 -s -o $@ $(objects) $(LIBPATH) $(LIB) $(STATICGCC) $(HEADERPATH)
+	g++ $(CXXFLAGS) -o $@ $(objects) $(LIBPATH) $(LIB) $(STATICGCC) $(HEADERPATH)
 	
 %.o: %.cpp
-	g++ -O2 -c -MMD -s -o $@ $< $(HEADERPATH)
+	g++ $(CXXFLAGS) -c -MMD -o $@ $< $(HEADERPATH)
 
 -include $(objects:.o=.d)
 

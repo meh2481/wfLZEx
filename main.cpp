@@ -2,6 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <sstream>
 #include <stdlib.h>
 #include <cstdio>
 #include <squish.h>
@@ -59,10 +60,10 @@ typedef struct
 } PiecesDesc;
 
 #define TEXTURE_TYPE_UNKNOWN1			1
-#define TEXTURE_TYPE_UNCOMPRESSED		2
-#define TEXTURE_TYPE_DXT5_COL			3
-#define TEXTURE_TYPE_DXT1_COL_MUL		5
-#define TEXTURE_TYPE_DXT5_COL_DXT1_MUL	6
+#define TEXTURE_TYPE_DXT1_COL			2	//squish::kDxt1 color, no multiply
+#define TEXTURE_TYPE_DXT5_COL			3	//squish::kDxt5 color, no multiply
+#define TEXTURE_TYPE_DXT1_COL_MUL		5	//squish::kDxt1 color and squish::kDxt1 multiply
+#define TEXTURE_TYPE_DXT5_COL_DXT1_MUL	6	//squish::kDxt5 color and squish::kDxt1 multiply
 
 int powerof2(int orig)
 {
@@ -301,22 +302,21 @@ int splitImages(const char* cFilename)
 				//Create color image
 				color = (uint8_t*)malloc(decompressedSize * 8);
 				if(!g_bMulOnly)
-					squish::DecompressImage( color, th.width, th.height, dst, g_DecompressFlags );
+					squish::DecompressImage( color, th.width, th.height, dst, squish::kDxt1 );
 				
 				//Create multiply image
 				mul = (uint8_t*)malloc(decompressedSize * 8);
 				if(!g_bColOnly)
-					squish::DecompressImage( mul, th.width, th.height, dst + decompressedSize/2, g_DecompressFlags );	//Second image starts halfway through decompressed data
+					squish::DecompressImage( mul, th.width, th.height, dst + decompressedSize/2, squish::kDxt1 );	//Second image starts halfway through decompressed data
 			}
-			else if(th.type == TEXTURE_TYPE_UNCOMPRESSED)
+			else if(th.type == TEXTURE_TYPE_DXT1_COL)
 			{
-				color = (uint8_t*)malloc(th.width * th.height * 4);
-				uint8_t* dest_ptr = color;
-				for(uint32_t  ctr = 0; ctr < th.width * th.height * 4; ctr++)
-					*dest_ptr++ = dst[ctr];
+				color = (uint8_t*)malloc(decompressedSize * 8);
+				squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
 			}
 			else
 			{
+				cout << "Decomp size: " << decompressedSize << ", w*h: " << th.width << "," << th.height << endl;
 				cout << "Warning: skipping unknown image type " << th.type << endl;
 				delete dst;
 				continue;
