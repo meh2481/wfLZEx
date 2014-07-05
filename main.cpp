@@ -59,7 +59,17 @@ typedef struct
 	//piece[]
 } PiecesDesc;
 
-#define TEXTURE_TYPE_UNKNOWN1			1
+typedef struct
+{
+	uint8_t r;
+	uint8_t g;
+	uint8_t b;
+	uint8_t a;
+} pixel;
+
+#define PALETTE_SIZE					256
+
+#define TEXTURE_TYPE_256_COL			1	//256-color 4bpp palette followed by pixel data
 #define TEXTURE_TYPE_DXT1_COL			2	//squish::kDxt1 color, no multiply
 #define TEXTURE_TYPE_DXT5_COL			3	//squish::kDxt5 color, no multiply
 #define TEXTURE_TYPE_DXT1_COL_MUL		5	//squish::kDxt1 color and squish::kDxt1 multiply
@@ -313,6 +323,33 @@ int splitImages(const char* cFilename)
 			{
 				color = (uint8_t*)malloc(decompressedSize * 8);
 				squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
+			}
+			else if(th.type == TEXTURE_TYPE_256_COL)
+			{
+				//Read in palette
+				vector<pixel> palette;
+				uint8_t* cur_data_ptr = dst;
+				for(uint32_t curPixel = 0; curPixel < PALETTE_SIZE; curPixel++)
+				{
+					pixel p;
+					p.r = *cur_data_ptr++;
+					p.g = *cur_data_ptr++;
+					p.b = *cur_data_ptr++;
+					p.a = *cur_data_ptr++;
+					palette.push_back(p);
+				}
+				
+				//Fill in image
+				color = (uint8_t*)malloc(th.width * th.height * 4);
+				uint8_t* cur_color_ptr = color;
+				for(uint32_t curPixel = 0; curPixel < th.width * th.height; curPixel++)
+				{
+					*cur_color_ptr++ = palette[*cur_data_ptr].b;
+					*cur_color_ptr++ = palette[*cur_data_ptr].g;
+					*cur_color_ptr++ = palette[*cur_data_ptr].r;
+					*cur_color_ptr++ = palette[*cur_data_ptr].a;
+					cur_data_ptr++;
+				}
 			}
 			else
 			{
