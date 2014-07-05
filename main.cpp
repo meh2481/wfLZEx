@@ -261,6 +261,7 @@ int splitImages(const char* cFilename)
 	{
 		if(memcmp ( &(vData.data()[i]), "ZLFW", 4 ) == 0)	//Found another file
 		{
+			bool bPieceTogether = g_bPieceTogether;
 			//Get texture header
 			uint64_t headerPos = i - sizeof(texHeader);
 			texHeader th;
@@ -274,7 +275,7 @@ int splitImages(const char* cFilename)
 				
 			//Search for frame header if we're going to be piecing these together
 			FrameDesc fd;
-			if(g_bPieceTogether)
+			if(bPieceTogether)
 			{
 				if(iCurFile == 0)	//First one tells us where to start searching backwards from
 					startPos = i;
@@ -285,6 +286,7 @@ int splitImages(const char* cFilename)
 					//Sanity check
 					if(fd.texDataSize > 6475888) continue;	//TODO: Test to make sure data size matches
 					if(fd.texOffset == 0 || fd.pieceOffset == 0) continue;
+					if(fd.pieceOffset > fileSize) continue;
 					
 					//Ok, found our header
 					break;
@@ -323,6 +325,11 @@ int splitImages(const char* cFilename)
 			{
 				color = (uint8_t*)malloc(decompressedSize * 8);
 				squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
+			}
+			else if(th.type == TEXTURE_TYPE_DXT5_COL)
+			{
+				color = (uint8_t*)malloc(th.width * th.height * 4);
+				squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt5);
 			}
 			else if(th.type == TEXTURE_TYPE_256_COL)
 			{
@@ -365,7 +372,7 @@ int splitImages(const char* cFilename)
 			maxul.x = maxul.y = maxbr.x = maxbr.y = 0;
 			list<piece> pieces;
 			
-			if(g_bPieceTogether)
+			if(bPieceTogether)
 			{
 				PiecesDesc pd;
 				memcpy(&pd, &(vData.data()[fd.pieceOffset]), sizeof(PiecesDesc));
@@ -382,6 +389,12 @@ int splitImages(const char* cFilename)
 						maxbr.x = p.bottomRight.x;
 					if(p.bottomRight.y < maxbr.y)
 						maxbr.y = p.bottomRight.y;
+					
+					//cout << p.topLeft.x << ", " << p.topLeft.y << ", " << p.topLeftUV.x  << ", " << p.topLeftUV.y << ", " << p.bottomRight.x << ", " << p.bottomRight.y << ", " << p.bottomRightUV.x << ", " << p.bottomRightUV.y << endl;
+					
+					//Sanity check: Skip over piecing if there's only one piece total that fills the whole thing
+					if(pd.numPieces == 1 && p.topLeftUV.x == 0.0 && p.topLeftUV.y == 0.0 && p.bottomRightUV.x == 1.0 && p.bottomRightUV.y == 1.0) bPieceTogether = false;
+					
 					pieces.push_back(p);
 				}
 			}
@@ -405,7 +418,7 @@ int splitImages(const char* cFilename)
 			}
 			
 			FIBITMAP* result = NULL;
-			if(g_bPieceTogether)
+			if(bPieceTogether && pieces.size())
 				result = PieceImage(dest_final, pieces, maxul, maxbr, th);
 			else
 				result = imageFromPixels(dest_final, th.width, th.height);
