@@ -83,7 +83,7 @@ int powerof2(int orig)
 	return result;
 }
 
-void multiply(uint8_t* dest_final, uint8_t* color, uint8_t* mul, texHeader th)
+void multiply(uint8_t* dest_final, uint8_t* color, uint8_t* mul, texHeader th, bool bUseMulAlpha)
 {
 	//Multiply two images together
 	for(int j = 0; j < th.width * th.height * 4; j += 4)
@@ -100,7 +100,10 @@ void multiply(uint8_t* dest_final, uint8_t* color, uint8_t* mul, texHeader th)
 			dest_final[j] = color[j]*fMul;
 			dest_final[j+1] = color[j+1]*fMul;
 			dest_final[j+2] = color[j+2]*fMul;
-			dest_final[j+3] = 255;
+			if(!bUseMulAlpha)
+				dest_final[j+3] = 255;
+			else
+				dest_final[j+3] = mul[j+3];
 		}				
 	}
 }
@@ -309,6 +312,7 @@ int splitImages(const char* cFilename)
 			//Decompress image
 			uint8_t* color = NULL;
 			uint8_t* mul = NULL;
+			bool bUseMul = false;
 			if(th.type == TEXTURE_TYPE_DXT1_COL_MUL)
 			{
 				//Create color image
@@ -358,6 +362,16 @@ int splitImages(const char* cFilename)
 					cur_data_ptr++;
 				}
 			}
+			else if(th.type == TEXTURE_TYPE_DXT5_COL_DXT1_MUL)
+			{
+				color = (uint8_t*)malloc(th.width * th.height * 4);
+				squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
+				
+				mul = (uint8_t*)malloc(th.width * th.height * 4);
+				squish::DecompressImage(mul, th.width, th.height, dst + th.width * th.height / 2, squish::kDxt5);
+				
+				bUseMul = true;
+			}
 			else
 			{
 				cout << "Decomp size: " << decompressedSize << ", w*h: " << th.width << "," << th.height << endl;
@@ -403,7 +417,7 @@ int splitImages(const char* cFilename)
 			if(color != NULL && mul != NULL)
 			{
 				dest_final = (uint8_t*)malloc(decompressedSize * 8);
-				multiply(dest_final, color, mul, th);
+				multiply(dest_final, color, mul, th, bUseMul);
 				free(color);
 				free(mul);
 			}
