@@ -23,20 +23,36 @@ bool g_bMulOnly;
 
 typedef struct
 {
+	uint32_t headerSz;	//Probably
+	uint32_t unk0;		//Some kind of number of something?
+	uint32_t numFrames;	//Number of frames in the animation
+	uint32_t numFrames2;//Number of something else? (numFrames2 + numFrames = total number of framePtrs)
+	uint32_t unk2;		// 0x100 is what?
+	uint32_t unk3;		//0x77F is what?
+	uint32_t ptrOffset;	//point to framePtr[]
+} anbHeader;
+
+typedef struct
+{
+	uint64_t frameOffset;	//point to FrameDesc
+} framePtr;		//Repeat anbHeader.numFrames + anbHeader.numFrames2 times
+
+typedef struct
+{
 	uint32_t type;
 	uint32_t width;
 	uint32_t height;
 	uint32_t unknown1[5];
-	//uint8_t data[]
+	//uint8_t data[]		//Followed by image data
 } texHeader;
 
 typedef struct  
 {
 	int      unknown0[4];
-	uint64_t texOffset; // offset from start of file to TexDesc
+	uint64_t texOffset; // point to texOffset
 	int      texDataSize;
 	int      unknown1;
-	uint64_t pieceOffset; // offset from start of file to PiecesDesc
+	uint64_t pieceOffset; // point to PiecesDesc
 } FrameDesc;
 
 typedef struct
@@ -56,7 +72,7 @@ typedef struct
 typedef struct
 {
 	uint32_t numPieces;
-	//piece[]
+	//piece[]				//Followed by numPieces pieces
 } PiecesDesc;
 
 typedef struct
@@ -144,8 +160,8 @@ FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxb
 	for(list<piece>::iterator lpi = pieces.begin(); lpi != pieces.end(); lpi++)
 	{
 		FIBITMAP* imgPiece = FreeImage_Copy(curImg, 
-											(int)((lpi->topLeftUV.x) * th.width + 0.5), (int)((lpi->topLeftUV.y) * th.height + 0.5), 
-											(int)((lpi->bottomRightUV.x) * th.width + 0.5), (int)((lpi->bottomRightUV.y) * th.height + 0.5));
+											(int)((lpi->topLeftUV.x) * th.width + 0.5f), (int)((lpi->topLeftUV.y) * th.height + 0.5f), 
+											(int)((lpi->bottomRightUV.x) * th.width + 0.5f), (int)((lpi->bottomRightUV.y) * th.height + 0.5f));
 		
 		//Paste this into the pieced image
 		Vec2 DestPos = CenterPos;
@@ -165,19 +181,19 @@ FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxb
 
 int splitImages(const char* cFilename)
 {
-	vector<uint8_t> vData;
-	FILE* fh = fopen( cFilename, "rb" );
+	uint8_t* fileData;
+	FILE* fh = fopen(cFilename, "rb");
 	if(fh == NULL)
 	{
 		cerr << "Unable to open input file " << cFilename << endl;
 		return 1;
 	}
-	fseek( fh, 0, SEEK_END );
-	size_t fileSize = ftell( fh );
-	fseek( fh, 0, SEEK_SET );
-	vData.reserve( fileSize );
-	size_t amt = fread( vData.data(), fileSize, 1, fh );
-	fclose( fh );
+	fseek(fh, 0, SEEK_END);
+	size_t fileSize = ftell(fh);
+	fseek(fh, 0, SEEK_SET);
+	fileData = (uint8_t*)malloc(fileSize);
+	size_t amt = fread(&fileData, fileSize, 1, fh);
+	fclose(fh);
 	cout << "Splitting images from file " << cFilename << endl;
 	
 	//Figure out what we'll be naming the images
@@ -192,25 +208,23 @@ int splitImages(const char* cFilename)
 		namepos = sName.rfind('\\');
 	if(namepos != string::npos)
 		sName.erase(0, namepos+1);
+		
+	//Grab ANB Header
+	anbHeader ah;
+	memcpy(&ah, fileData, sizeof(anbHeader));
 	
 	//Parse through, splitting out before each ZLFW header
 	int iCurFile = 0;
 	uint64_t startPos = 0;
 	for(uint64_t i = 0; i < fileSize; i++)	//Definitely not the fastest way to do it... but I don't care
 	{
-		if(memcmp ( &(vData.data()[i]), "ZLFW", 4 ) == 0)	//Found another file
+		if(memcmp ( &(fileData[i]), "ZLFW", 4 ) == 0)	//Found another file
 		{
 			bool bPieceTogether = g_bPieceTogether;
 			//Get texture header
 			uint64_t headerPos = i - sizeof(texHeader);
 			texHeader th;
-			memcpy(&th, &(vData.data()[headerPos]), sizeof(texHeader));
-			
-			//if(th.type != TEXTURE_TYPE_DXT1_COL_MUL)	//Type of image we don't support; skip
-			//{
-			//	cout << "Tex header: type=" << th.type << ", width=" << th.width << ", height=" << th.height << endl;
-				//continue;
-			//}
+			memcpy(&th, &(fileData[headerPos]), sizeof(texHeader));
 				
 			//Search for frame header if we're going to be piecing these together
 			FrameDesc fd;
@@ -220,7 +234,7 @@ int splitImages(const char* cFilename)
 					startPos = i;
 				for(int k = startPos - sizeof(texHeader) - sizeof(FrameDesc); k > 0; k -= 4)
 				{
-					memcpy(&fd, &(vData.data()[k]), sizeof(FrameDesc));
+					memcpy(&fd, &(fileData[k]), sizeof(FrameDesc));
 					if(fd.texOffset != headerPos) continue;
 					//Sanity check
 					if(fd.texDataSize > 6475888) continue;	//TODO: Test to make sure data size matches
@@ -234,11 +248,11 @@ int splitImages(const char* cFilename)
 			
 			//Decompress WFLZ data
 			uint32_t* chunk = NULL;
-			const uint32_t decompressedSize = wfLZ_GetDecompressedSize( &(vData.data()[i]) );
+			const uint32_t decompressedSize = wfLZ_GetDecompressedSize( &(fileData[i]) );
 			uint8_t* dst = ( uint8_t* )malloc( decompressedSize );
 			uint32_t offset = 0;
 			int count = 0;
-			while( uint8_t* compressedBlock = wfLZ_ChunkDecompressLoop( &(vData.data())[i], &chunk ) )
+			while( uint8_t* compressedBlock = wfLZ_ChunkDecompressLoop( &(fileData)[i], &chunk ) )
 			{		
 				wfLZ_Decompress( compressedBlock, dst + offset );
 				const uint32_t blockSize = wfLZ_GetDecompressedSize( compressedBlock );
@@ -325,11 +339,11 @@ int splitImages(const char* cFilename)
 			if(bPieceTogether)
 			{
 				PiecesDesc pd;
-				memcpy(&pd, &(vData.data()[fd.pieceOffset]), sizeof(PiecesDesc));
+				memcpy(&pd, &(fileData[fd.pieceOffset]), sizeof(PiecesDesc));
 				for(uint32_t j = 0; j < pd.numPieces; j++)
 				{
 					piece p;
-					memcpy(&p, &(vData.data()[fd.pieceOffset+j*sizeof(piece)+sizeof(PiecesDesc)]), sizeof(piece));
+					memcpy(&p, &(fileData[fd.pieceOffset+j*sizeof(piece)+sizeof(PiecesDesc)]), sizeof(piece));
 					//Store our maximum values, so we know how large the image is
 					if(p.topLeft.x < maxul.x)
 						maxul.x = p.topLeft.x;
@@ -342,13 +356,11 @@ int splitImages(const char* cFilename)
 					
 					//cout << p.topLeft.x << ", " << p.topLeft.y << ", " << p.topLeftUV.x  << ", " << p.topLeftUV.y << ", " << p.bottomRight.x << ", " << p.bottomRight.y << ", " << p.bottomRightUV.x << ", " << p.bottomRightUV.y << endl;
 					
-					//Sanity check: Skip over piecing if there's only one piece total that fills the whole thing
-					if(pd.numPieces == 1 && p.topLeftUV.x == 0.0 && p.topLeftUV.y == 0.0 && p.bottomRightUV.x == 1.0 && p.bottomRightUV.y == 1.0) bPieceTogether = false;
-					
 					pieces.push_back(p);
 				}
 			}
 			
+			//Multiply images together if need be
 			uint8_t* dest_final = NULL;
 			if(color != NULL && mul != NULL)
 			{
@@ -363,6 +375,7 @@ int splitImages(const char* cFilename)
 				dest_final = mul;
 			else	//Should be unreachable
 			{
+				cout << "ERR: Unreachable" << endl;
 				free(dst);
 				continue;
 			}
@@ -379,96 +392,14 @@ int splitImages(const char* cFilename)
 			FreeImage_Save(FIF_PNG, result, oss.str().c_str());
 			FreeImage_Unload(result);
 			
-			
-			//Merge images together and piece them up
-			/*if(!g_bSeparate && g_bPieceTogether)
-			{
-				uint8_t* dest_final = (uint8_t*)malloc(decompressedSize * 8);
-				multiply(dest_final, color, mul, th);
-			
-				FIBITMAP* result = PieceImage(dest_final, pieces, maxul, maxbr, th);
-				
-				char cOutName[256];
-				sprintf(cOutName, "output/%s_%d.png", sName.c_str(), iCurFile);
-				cout << "Saving " << cOutName << endl;
-				FreeImage_Save(FIF_PNG, result, cOutName);
-				FreeImage_Unload(result);
-				free(dest_final);
-			}
-			//Separate images, pieced together
-			else if(g_bSeparate && g_bPieceTogether)
-			{
-				char cOutName[256];
-				//Save color map
-				if(!g_bMulOnly)
-				{
-					FIBITMAP* result = PieceImage(color, pieces, maxul, maxbr, th, false, false);
-					sprintf(cOutName, "output/%s_%d-col.png", sName.c_str(), iCurFile);
-					cout << "Saving " << cOutName << endl;
-					FreeImage_Save(FIF_PNG, result, cOutName);
-					FreeImage_Unload(result);
-				}
-				
-				//Save multiply map
-				if(!g_bColOnly)
-				{
-					FIBITMAP* result = PieceImage(mul, pieces, maxul, maxbr, th, true);
-					sprintf(cOutName, "output/%s_%d-mul.png", sName.c_str(), iCurFile);
-					cout << "Saving " << cOutName << endl;
-					FreeImage_Save(FIF_PNG, result, cOutName);
-					FreeImage_Unload(result);
-				}
-			}
-			//Separate images, not pieced together
-			else if(g_bSeparate && !g_bPieceTogether)
-			{
-				FIBITMAP* result;
-				char cOutName[256];
-				
-				//Save color image
-				if(!g_bMulOnly)
-				{
-					result = imageFromPixels(color, th.width, th.height);
-					sprintf(cOutName, "output/%s_%d-col.png", sName.c_str(), iCurFile);
-					cout << "Saving " << cOutName << endl;
-					FreeImage_Save(FIF_PNG, result, cOutName);
-					FreeImage_Unload(result);
-				}
-				
-				//Save multiply image
-				if(!g_bColOnly)
-				{
-					result = imageFromPixels(mul, th.width, th.height);
-					sprintf(cOutName, "output/%s_%d-mul.png", sName.c_str(), iCurFile);
-					cout << "Saving " << cOutName << endl;
-					FreeImage_Save(FIF_PNG, result, cOutName);
-					FreeImage_Unload(result);
-				}
-			}
-			//Same image, not pieced together
-			else if(!g_bSeparate && !g_bPieceTogether)
-			{
-				uint8_t* dest_final = (uint8_t*)malloc(th.width * th.height * 4);
-				multiply(dest_final, color, mul, th);
-				FIBITMAP* result = imageFromPixels(dest_final, th.width, th.height);
-				
-				char cOutName[256];
-				sprintf(cOutName, "output/%s_%d.png", sName.c_str(), iCurFile);
-				cout << "Saving " << cOutName << endl;
-				FreeImage_Save(FIF_PNG, result, cOutName);
-				FreeImage_Unload(result);
-				
-				free(dest_final);
-			}*/
 			//Free allocated memory
 			free(dst);
 			free(dest_final);
-			//free(color);
-			//free(mul);
 			
 			iCurFile++;
 		}
 	}
+	free(fileData);
 	return 0;
 }
 
