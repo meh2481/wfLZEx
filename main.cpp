@@ -75,13 +75,7 @@ typedef struct
 #define TEXTURE_TYPE_DXT1_COL_MUL		5	//squish::kDxt1 color and squish::kDxt1 multiply
 #define TEXTURE_TYPE_DXT5_COL_DXT1_MUL	6	//squish::kDxt5 color and squish::kDxt1 multiply
 
-int powerof2(int orig)
-{
-	int result = 1;
-	while(result < orig)
-		result <<= 1;
-	return result;
-}
+
 
 void multiply(uint8_t* dest_final, uint8_t* color, uint8_t* mul, texHeader th, bool bUseMulAlpha)
 {
@@ -110,30 +104,15 @@ void multiply(uint8_t* dest_final, uint8_t* color, uint8_t* mul, texHeader th, b
 
 FIBITMAP* imageFromPixels(uint8_t* imgData, uint32_t width, uint32_t height)
 {
-	//return FreeImage_ConvertFromRawBits(imgData, width, height, width*4, 32, 0xFF0000, 0x00FF00, 0x0000FF, true);	//Doesn't seem to work
-	FIBITMAP* curImg = FreeImage_Allocate(width, height, 32);
-	FREE_IMAGE_TYPE image_type = FreeImage_GetImageType(curImg);
-	if(image_type == FIT_BITMAP)
-	{
-		int curPos = 0;
-		unsigned pitch = FreeImage_GetPitch(curImg);
-		BYTE* bits = (BYTE*)FreeImage_GetBits(curImg);
-		bits += pitch * height - pitch;
-		for(int y = height-1; y >= 0; y--)
-		{
-			BYTE* pixel = (BYTE*)bits;
-			for(int x = 0; x < width; x++)
-			{
-				pixel[FI_RGBA_RED] = imgData[curPos++];
-				pixel[FI_RGBA_GREEN] = imgData[curPos++];
-				pixel[FI_RGBA_BLUE] = imgData[curPos++];
-				pixel[FI_RGBA_ALPHA] = imgData[curPos++];
-				pixel += 4;
-			}
-			bits -= pitch;
-		}
-	}
-	return curImg;
+	//FreeImage is broken here and you can't swap R/G/B channels upon creation. Do that manually
+	FIBITMAP* result = FreeImage_ConvertFromRawBits(imgData, width, height, ((((32 * width) + 31) / 32) * 4), 32, FI_RGBA_RED, FI_RGBA_GREEN, FI_RGBA_BLUE, true);
+	FIBITMAP* r = FreeImage_GetChannel(result, FICC_RED);
+	FIBITMAP* b = FreeImage_GetChannel(result, FICC_BLUE);
+	FreeImage_SetChannel(result, b, FICC_RED);
+	FreeImage_SetChannel(result, r, FICC_BLUE);
+	FreeImage_Unload(r);
+	FreeImage_Unload(b);
+	return result;
 }
 
 FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxbr, texHeader th, bool bFillBlack = false, bool bAdd = true);
@@ -146,29 +125,16 @@ FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxb
 	OutputSize.y = maxul.y - maxbr.y;
 	CenterPos.x = -maxul.x;
 	CenterPos.y = maxul.y;
-	OutputSize.x = uint32_t(OutputSize.x);
-	OutputSize.y = uint32_t(OutputSize.y);
+	OutputSize.x = (uint32_t)(OutputSize.x + 0.5f);
+	OutputSize.y = (uint32_t)(OutputSize.y + 0.5f);
 
-	FIBITMAP* result = FreeImage_Allocate(OutputSize.x+6, OutputSize.y+6, 32);
+	FIBITMAP* result = FreeImage_Allocate(OutputSize.x, OutputSize.y, 32);
 	
 	//Fill this image black (Important for multiply images)
 	if(bFillBlack)
 	{
-		int width = FreeImage_GetWidth(result);
-		int height = FreeImage_GetHeight(result);
-		unsigned pitch = FreeImage_GetPitch(result);
-		BYTE* bits = (BYTE*)FreeImage_GetBits(result);
-		for(int y = 0; y < height; y++)
-		{
-			BYTE* pixel = bits;
-			for(int x = 0; x < width; x++)
-			{
-				pixel[FI_RGBA_RED] = pixel[FI_RGBA_GREEN] = pixel[FI_RGBA_BLUE] = 0;
-				pixel[FI_RGBA_ALPHA] = 255;
-				pixel += 4;
-			}
-			bits += pitch;
-		}
+		RGBQUAD q = {0,0,0,255};
+		FreeImage_FillBackground(result, &q);
 	}
 
 	//Create image from this set of pixels
@@ -177,48 +143,18 @@ FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxb
 	//Patch image together from pieces
 	for(list<piece>::iterator lpi = pieces.begin(); lpi != pieces.end(); lpi++)
 	{
-		float add = 0;
-		if(bAdd)
-			add = 0.001;
 		FIBITMAP* imgPiece = FreeImage_Copy(curImg, 
-											floor((lpi->topLeftUV.x) * th.width - add), floor((lpi->topLeftUV.y) * th.height - add), 
-											ceil((lpi->bottomRightUV.x) * th.width + add), ceil((lpi->bottomRightUV.y) * th.height + add));
+											(int)((lpi->topLeftUV.x) * th.width + 0.5), (int)((lpi->topLeftUV.y) * th.height + 0.5), 
+											(int)((lpi->bottomRightUV.x) * th.width + 0.5), (int)((lpi->bottomRightUV.y) * th.height + 0.5));
 		
-		//Since pasting doesn't allow you to post an image onto a particular position of another, do that by hand
-		int curPos = 0;
-		int srcW = FreeImage_GetWidth(imgPiece);
-		int srcH = FreeImage_GetHeight(imgPiece);
-		unsigned pitch = FreeImage_GetPitch(imgPiece);
-		unsigned destpitch = FreeImage_GetPitch(result);
-		BYTE* bits = (BYTE*)FreeImage_GetBits(imgPiece);
-		BYTE* destBits = (BYTE*)FreeImage_GetBits(result);
+		//Paste this into the pieced image
 		Vec2 DestPos = CenterPos;
 		DestPos.x += lpi->topLeft.x;
-		//DestPos.y -= lpi->topLeft.y;
-		DestPos.y = OutputSize.y - srcH;
-		DestPos.y -= CenterPos.y;
-		DestPos.y += lpi->topLeft.y;
-		DestPos.x = (unsigned int)(DestPos.x);
-		DestPos.y = ceil(DestPos.y);
-		for(int y = 0; y < srcH; y++)
-		{
-			BYTE* pixel = bits;
-			BYTE* destpixel = destBits;
-			destpixel += (unsigned)((DestPos.y + y + 3)) * destpitch;
-			destpixel += (unsigned)((DestPos.x + 3) * 4);
-			for(int x = 0; x < srcW; x++)
-			{
-				destpixel[FI_RGBA_RED] = pixel[FI_RGBA_RED];
-				destpixel[FI_RGBA_GREEN] = pixel[FI_RGBA_GREEN];
-				destpixel[FI_RGBA_BLUE] = pixel[FI_RGBA_BLUE];
-				//if(pixel[FI_RGBA_ALPHA] != 0)
-					destpixel[FI_RGBA_ALPHA] = pixel[FI_RGBA_ALPHA];
-				pixel += 4;
-				destpixel += 4;
-			}
-			bits += pitch;
-		}
+		DestPos.y -= lpi->topLeft.y;	//y is negative here
+		DestPos.x = (uint32_t)(DestPos.x + 0.5f);
+		DestPos.y = (uint32_t)(DestPos.y + 0.5f);
 		
+		FreeImage_Paste(result, imgPiece, DestPos.x, DestPos.y, 256);
 		FreeImage_Unload(imgPiece);
 	}
 	FreeImage_Unload(curImg);
