@@ -23,6 +23,9 @@ bool g_bColOnly;
 bool g_bMulOnly;
 bool g_bCrop;
 
+int offsetX = 2;
+int offsetY = 2;
+
 
 //------------------------------
 // ANB file format structs
@@ -317,14 +320,6 @@ int splitImages(const char* cFilename)
 		namepos = sName.rfind('\\');
 	if(namepos != string::npos)
 		sName.erase(0, namepos+1);
-	
-	//Create output folder	
-#ifdef _WIN32
-	CreateDirectory(TEXT(sName.c_str()), NULL);
-#else
-	//int result = system("mkdir -p output");
-	#error Fix directory creation on Mac/Linux
-#endif
 		
 	//Grab ANB Header
 	anbHeader ah;
@@ -543,11 +538,35 @@ int splitImages(const char* cFilename)
 		animations.push_back(anmh);
 	}
 	
-	//Now loop through, building images and saving frames
-	//TODO: Stitch together into spritesheet
+	//Figure out dimensions of final image
+	int finalX = offsetX;
+	int finalY = offsetY;
+	for(vector<animHelper>::iterator i = animations.begin(); i != animations.end(); i++)
+	{
+		int animMaxX = (int)(i->maxbr.x - i->maxul.x + 0.5);
+		int animMaxY = (int)(i->maxul.y - i->maxbr.y + 0.5);
+		
+		animMaxX += offsetX;
+		animMaxX *= i->animFrames.size();
+		
+		if(finalX < animMaxX)
+			finalX = animMaxX + offsetX;
+		
+		finalY += offsetY + animMaxY;
+	}
+	
+	//Allocate final image, and piece
+	FIBITMAP* finalSheet = FreeImage_Allocate(finalX, finalY, 32);
+	RGBQUAD q = {128,128,0,255};
+	FreeImage_FillBackground(finalSheet, (const void *)&q);
+	
+	int curX = offsetX;
+	int curY = offsetY;
+	//Now loop through, building images and stitching frames into the final image
 	for(vector<animHelper>::iterator i = animations.begin(); i != animations.end(); i++)
 	{
 		uint32_t curFrame = 1;
+		int yAdd = 0;
 		for(list<uint32_t>::iterator j = i->animFrames.begin(); j != i->animFrames.end(); j++)
 		{
 			//Now that we have the maximum extents for each animation, we can build the frames
@@ -556,15 +575,25 @@ int splitImages(const char* cFilename)
 				result = PieceImage(frameSizes[*j].data, framePieces[*j], i->maxul, i->maxbr, frameSizes[*j].th);
 			else
 				result = imageFromPixels(frameSizes[*j].data, frameSizes[*j].th.width, frameSizes[*j].th.height);
+				
+			yAdd = offsetY + FreeImage_GetHeight(result);
 			
-			//Output as animID_frameNo.png
-			ostringstream oss;
-			oss << sName << '/' << i->animIDHash << '_' << setw(3) << setfill('0') << curFrame++ << ".png";
-			cout << "Saving " << oss.str() << endl;
-			FreeImage_Save(FIF_PNG, result, oss.str().c_str());
+			//Paste this into our final image
+			FreeImage_Paste(finalSheet, result, curX, curY, 300);
+		
+			curX += offsetX + FreeImage_GetWidth(result);
 			FreeImage_Unload(result);
 		}
+		curY += yAdd;
+		curX = offsetX;
 	}
+	
+	//Save final sheet
+	ostringstream oss;
+	oss << "output/" << sName << ".png";
+	cout << "Saving " << oss.str() << endl;
+	FreeImage_Save(FIF_PNG, finalSheet, oss.str().c_str());
+	FreeImage_Unload(finalSheet);
 	
 	for(vector<frameSizeHelper>::iterator i = frameSizes.begin(); i != frameSizes.end(); i++)
 		free(i->data);
@@ -582,7 +611,12 @@ int main(int argc, char** argv)
 	g_bColOnly = g_bMulOnly = false;
 	g_bCrop = false;
 	FreeImage_Initialise();
-
+	//Create output folder	
+#ifdef _WIN32
+	CreateDirectory(TEXT("output"), NULL);
+#else
+	int result = system("mkdir -p output");
+#endif
 	list<string> sFilenames;
 	//Parse commandline
 	for(int i = 1; i < argc; i++)
