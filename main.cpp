@@ -23,7 +23,7 @@ bool g_bColOnly;
 bool g_bMulOnly;
 bool g_bCrop;
 
-int offsetX = 2;
+int offsetX = 1;
 int offsetY = 2;
 
 
@@ -366,8 +366,8 @@ int splitImages(const char* cFilename)
 				//	cout << p.topLeft.x << ", " << p.topLeft.y << ", " << p.topLeftUV.x  << ", " << p.topLeftUV.y << ", " << p.bottomRight.x << ", " << p.bottomRight.y << ", " << p.bottomRightUV.x << ", " << p.bottomRightUV.y << endl;
 				
 				pieces.push_back(p);
-				frameSizes.push_back(fsh);
 			}
+			frameSizes.push_back(fsh);
 			framePieces.push_back(pieces);
 		}
 	}
@@ -540,7 +540,9 @@ int splitImages(const char* cFilename)
 	
 	//Figure out dimensions of final image
 	int finalX = offsetX;
-	int finalY = offsetY;
+	int finalY = offsetY/2;
+	int totalWidthAvg = 0;
+	//First loop: Figure out maximum width of each animation
 	for(vector<animHelper>::iterator i = animations.begin(); i != animations.end(); i++)
 	{
 		int animMaxX = (int)(i->maxbr.x - i->maxul.x + 0.5);
@@ -551,6 +553,41 @@ int splitImages(const char* cFilename)
 		
 		if(finalX < animMaxX)
 			finalX = animMaxX + offsetX;
+		totalWidthAvg += animMaxX + offsetX;
+		
+		finalY += offsetY + animMaxY;
+	}
+	
+	//Don't care if there's only a few
+	if(animations.size() > 5)
+		totalWidthAvg /= animations.size();
+	totalWidthAvg *= 2;
+	
+	//If an animation is longer than double the size of the average, cut it up vertically
+	finalX = offsetX;
+	finalY = offsetY/2;
+	for(vector<animHelper>::iterator i = animations.begin(); i != animations.end(); i++)
+	{
+		int animMaxX = (int)(i->maxbr.x - i->maxul.x + 0.5);
+		int animMaxY = (int)(i->maxul.y - i->maxbr.y + 0.5);
+		
+		animMaxX += offsetX;
+		int curAnimMaxX = 0;
+		for(int j = 0; j < i->animFrames.size(); j++)
+		{
+			if(curAnimMaxX + animMaxX > totalWidthAvg)
+			{
+				if(finalX < curAnimMaxX)				//Save final width
+					finalX = curAnimMaxX + offsetX;
+				
+				finalY += offsetY/2 + animMaxY;			//Offset vertically, spacing of 1 pixel instead of 2
+				curAnimMaxX = 0;						//Start next row
+			}
+			curAnimMaxX += animMaxX;
+		}
+		
+		if(finalX < curAnimMaxX)
+			finalX = curAnimMaxX + offsetX;
 		
 		finalY += offsetY + animMaxY;
 	}
@@ -561,7 +598,7 @@ int splitImages(const char* cFilename)
 	FreeImage_FillBackground(finalSheet, (const void *)&q);
 	
 	int curX = offsetX;
-	int curY = offsetY;
+	int curY = offsetY/2;
 	//Now loop through, building images and stitching frames into the final image
 	for(vector<animHelper>::iterator i = animations.begin(); i != animations.end(); i++)
 	{
@@ -578,8 +615,20 @@ int splitImages(const char* cFilename)
 				
 			yAdd = offsetY + FreeImage_GetHeight(result);
 			
+			//See if we should start next row in sprite sheet (if this anim is too long)
+			if(curX + FreeImage_GetWidth(result) + offsetX > totalWidthAvg)
+			{
+				curX = offsetX;
+				curY += FreeImage_GetHeight(result) + offsetY/2;
+			}
+			
 			//Paste this into our final image
 			FreeImage_Paste(finalSheet, result, curX, curY, 300);
+			
+			//ostringstream oss;
+			//oss << "output/" << sName << '_' << i->animIDHash << '_' << setw(3) << setfill('0') << *j << ".png";
+			//cout << "Saving " << oss.str() << endl;
+			//FreeImage_Save(FIF_PNG, result, oss.str().c_str());
 		
 			curX += offsetX + FreeImage_GetWidth(result);
 			FreeImage_Unload(result);
