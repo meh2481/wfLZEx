@@ -21,7 +21,12 @@ bool g_bSeparate;
 bool g_bPieceTogether;
 bool g_bColOnly;
 bool g_bMulOnly;
+bool g_bCrop;
 
+
+//------------------------------
+// ANB file format structs
+//------------------------------
 typedef struct
 {
 	uint32_t headerSz;	//Probably
@@ -79,16 +84,8 @@ typedef struct
 
 typedef struct
 {
-	uint8_t r;
-	uint8_t g;
-	uint8_t b;
-	uint8_t a;
-} pixel;
-
-typedef struct
-{
-	uint32_t animIDHash;		//We don't care
-	uint32_t numFrames;	//How many frames in the animation
+	uint32_t animIDHash;	//We don't care
+	uint32_t numFrames;		//How many frames in the animation
 	uint32_t unk0[2];
 	uint64_t animListPtr;	//point to animFrameList[]
 	uint32_t unk1[2];
@@ -102,10 +99,30 @@ typedef struct
 typedef struct
 {
 	uint32_t frameNo;
-	float unk0[10];
+	int unk0[10];
 	//uint32_t unk1;
 	//float unk2[8];
 }animFrame;
+
+
+//------------------------------
+// Helper structs
+//------------------------------
+typedef struct
+{
+	uint8_t r;
+	uint8_t g;
+	uint8_t b;
+	uint8_t a;
+} pixel;
+
+typedef struct
+{
+	Vec2 maxul;
+	Vec2 maxbr;
+	FIBITMAP* img;
+} frameImg;
+
 
 #define PALETTE_SIZE					256
 
@@ -115,7 +132,58 @@ typedef struct
 #define TEXTURE_TYPE_DXT1_COL_MUL		5	//squish::kDxt1 color and squish::kDxt1 multiply
 #define TEXTURE_TYPE_DXT5_COL_DXT1_MUL	6	//squish::kDxt5 color and squish::kDxt1 multiply
 
-
+//Crop all alpha=0 space around an image input, update maxul/br accordingly
+frameImg cropImage(frameImg input)
+{
+	//Grab image bits
+	int width = FreeImage_GetWidth(input.img);
+	int height = FreeImage_GetHeight(input.img);
+	unsigned pitch = FreeImage_GetPitch(input.img);
+	BYTE* bits = (BYTE*)FreeImage_GetBits(input.img);
+	
+	//Keep track of extents
+	int cropTop = height;
+	int cropLeft = width;
+	int cropRight = 0;
+	int cropBottom = 0;
+	
+	//Spin through image
+	for(int y = 0; y < height; y++)
+	{
+		BYTE* pixel = bits;
+		for(int x = 0; x < width; x++)
+		{
+			if(pixel[FI_RGBA_ALPHA])	//Pixel with nonzero alpha value
+			{
+				if(y < cropTop)
+					cropTop = y;
+				if(x < cropLeft)
+					cropLeft = x;
+				if(y > cropBottom)
+					cropBottom = y;
+				if(x > cropRight)
+					cropRight = x;
+			}
+			pixel += 4;
+		}
+		bits += pitch;
+	}
+	
+	if(cropLeft || cropTop || cropRight+1 < width || cropBottom+1 < height)
+	{
+		RGBQUAD q = {255,0,0,255};
+		FIBITMAP* result = FreeImage_EnlargeCanvas(input.img, -cropLeft, -(height-(cropBottom+1)), -(width-(cropRight+1)), -cropTop, &q, FI_COLOR_IS_RGB_COLOR);
+		FreeImage_Unload(input.img);
+		input.img = result;
+		
+		input.maxul.x += cropLeft;
+		input.maxul.y -= cropTop;
+		input.maxbr.x -= cropRight;
+		input.maxbr.y += cropBottom;
+	}
+	
+	return input;
+}
 
 void multiply(uint8_t* dest_final, uint8_t* color, uint8_t* mul, texHeader th, bool bUseMulAlpha)
 {
@@ -247,7 +315,7 @@ int splitImages(const char* cFilename)
 	memcpy(&ah, fileData, sizeof(anbHeader));
 	
 	//cout << ah.numFrames << endl;
-	vector<FIBITMAP*> frameImages;
+	vector<frameImg> frameImages;
 	frameImages.reserve(ah.numFrames);
 	
 	//Parse through, splitting each image out
@@ -375,16 +443,15 @@ int splitImages(const char* cFilename)
 				if(p.bottomRight.y < maxbr.y)
 					maxbr.y = p.bottomRight.y;
 				
-				//cout << p.topLeft.x << ", " << p.topLeft.y << ", " << p.topLeftUV.x  << ", " << p.topLeftUV.y << ", " << p.bottomRight.x << ", " << p.bottomRight.y << ", " << p.bottomRightUV.x << ", " << p.bottomRightUV.y << endl;
+				//if(i >= 151 && i <= 154)
+				//	cout << p.topLeft.x << ", " << p.topLeft.y << ", " << p.topLeftUV.x  << ", " << p.topLeftUV.y << ", " << p.bottomRight.x << ", " << p.bottomRight.y << ", " << p.bottomRightUV.x << ", " << p.bottomRightUV.y << endl;
 				
 				pieces.push_back(p);
 			}
 		}
 		
 		//if(i >= 151 && i <= 154)
-		//{
 		//	cout << maxul.x << ", " << maxul.y << " " << maxbr.x << ", " << maxbr.y << endl;
-		//}
 		
 		//Multiply images together if need be
 		uint8_t* dest_final = NULL;
@@ -412,14 +479,15 @@ int splitImages(const char* cFilename)
 		else
 			result = imageFromPixels(dest_final, th.width, th.height);
 		
-		//Stick into our frame list and keep going
-		frameImages.push_back(result);
+		frameImg fi;
+		fi.maxul = maxul;
+		fi.maxbr = maxbr;
+		fi.img = result;
 		
-		//ostringstream oss;
-		//oss << sName << '/' << setw(3) << setfill('0') << i+1 << ".png";
-		//cout << "Saving " << oss.str() << endl;
-		//FreeImage_Save(FIF_PNG, result, oss.str().c_str());
-		//FreeImage_Unload(result);
+		//Stick into our frame list and keep going
+		if(g_bCrop)
+			fi = cropImage(fi);
+		frameImages.push_back(fi);
 		
 		//Free allocated memory
 		free(dst);
@@ -445,22 +513,22 @@ int splitImages(const char* cFilename)
 			animFrame anf;
 			memcpy(&anf, &fileData[afl.offset], sizeof(animFrame));
 			
-			cout << "Anim frame " << anf.frameNo << ": ";
-			for(int k = 0; k < 10; k++)
-				cout << anf.unk0[k] << ", ";
-			cout << endl;
+			//cout << "Anim frame " << anf.frameNo << ": ";
+			//for(int k = 0; k < 10; k++)
+			//	cout << anf.unk0[k] << ", ";
+			//cout << endl;
 			
 			//Output as animID_frameNo.png
 			ostringstream oss;
 			oss << sName << '/' << anh.animIDHash << '_' << setw(3) << setfill('0') << j+1 << ".png";
 			cout << "Saving " << oss.str() << endl;
-			FreeImage_Save(FIF_PNG, frameImages[anf.frameNo], oss.str().c_str());
+			FreeImage_Save(FIF_PNG, frameImages[anf.frameNo].img, oss.str().c_str());
 		}
 	}
 	
 	//Clear images from memory
-	for(vector<FIBITMAP*>::iterator i = frameImages.begin(); i != frameImages.end(); i++)
-		FreeImage_Unload(*i);
+	for(vector<frameImg>::iterator i = frameImages.begin(); i != frameImages.end(); i++)
+		FreeImage_Unload(i->img);
 	frameImages.clear();
 	
 	free(fileData);
@@ -473,6 +541,7 @@ int main(int argc, char** argv)
 	g_bSeparate = false;
 	g_bPieceTogether = true;
 	g_bColOnly = g_bMulOnly = false;
+	g_bCrop = false;
 	FreeImage_Initialise();
 
 	list<string> sFilenames;
@@ -502,6 +571,8 @@ int main(int argc, char** argv)
 		}
 		else if(s == "-nopiece")
 			g_bPieceTogether = false;
+		else if(s == "-crop")
+			g_bCrop = true;
 		else
 			sFilenames.push_back(s);
 	}
