@@ -26,16 +26,17 @@ typedef struct
 {
 	uint32_t headerSz;	//Probably
 	uint32_t unk0;		//Some kind of number of something?
-	uint32_t numFrames;	//Number of frames in the animation
+	uint32_t numFrames;	//Number of animation frames in the file
 	uint32_t numAnimations;
 	uint32_t unk2;		// 0x100 is what?
 	uint32_t unk3;		//0x77F is what?
-	uint32_t ptrOffset;	//point to framePtr[]
+	uint64_t ptrOffset;	//point to frame framePtr[]
+	uint64_t animOffset;//point to anim framePtr[]
 } anbHeader;
 
 typedef struct
 {
-	uint64_t frameOffset;	//point to FrameDesc
+	uint64_t frameOffset;	//point to FrameDesc or animHeader
 } framePtr;		//Repeat anbHeader.numFrames + anbHeader.numAnimations times
 
 typedef struct
@@ -86,10 +87,11 @@ typedef struct
 
 typedef struct
 {
-	int animID;			//We don't care
+	uint32_t animIDHash;		//We don't care
 	uint32_t numFrames;	//How many frames in the animation
 	uint32_t unk0[2];
-	uint32_t animListPtr;	//point to animFrameList
+	uint64_t animListPtr;	//point to animFrameList[]
+	uint32_t unk1[2];
 }animHeader;
 
 typedef struct
@@ -100,9 +102,9 @@ typedef struct
 typedef struct
 {
 	uint32_t frameNo;
-	float unk0;
-	uint32_t unk1;
-	float unk2[8];
+	float unk0[10];
+	//uint32_t unk1;
+	//float unk2[8];
 }animFrame;
 
 #define PALETTE_SIZE					256
@@ -244,7 +246,9 @@ int splitImages(const char* cFilename)
 	anbHeader ah;
 	memcpy(&ah, fileData, sizeof(anbHeader));
 	
-	cout << ah.numFrames << endl;
+	//cout << ah.numFrames << endl;
+	vector<FIBITMAP*> frameImages;
+	frameImages.reserve(ah.numFrames);
 	
 	//Parse through, splitting each image out
 	uint64_t startPos = 0;
@@ -377,10 +381,10 @@ int splitImages(const char* cFilename)
 			}
 		}
 		
-		if(i >= 151 && i <= 154)
-		{
-			cout << maxul.x << ", " << maxul.y << " " << maxbr.x << ", " << maxbr.y << endl;
-		}
+		//if(i >= 151 && i <= 154)
+		//{
+		//	cout << maxul.x << ", " << maxul.y << " " << maxbr.x << ", " << maxbr.y << endl;
+		//}
 		
 		//Multiply images together if need be
 		uint8_t* dest_final = NULL;
@@ -408,16 +412,57 @@ int splitImages(const char* cFilename)
 		else
 			result = imageFromPixels(dest_final, th.width, th.height);
 		
-		ostringstream oss;
-		oss << sName << '/' << setw(3) << setfill('0') << i+1 << ".png";
-		cout << "Saving " << oss.str() << endl;
-		FreeImage_Save(FIF_PNG, result, oss.str().c_str());
-		FreeImage_Unload(result);
+		//Stick into our frame list and keep going
+		frameImages.push_back(result);
+		
+		//ostringstream oss;
+		//oss << sName << '/' << setw(3) << setfill('0') << i+1 << ".png";
+		//cout << "Saving " << oss.str() << endl;
+		//FreeImage_Save(FIF_PNG, result, oss.str().c_str());
+		//FreeImage_Unload(result);
 		
 		//Free allocated memory
 		free(dst);
 		free(dest_final);
 	}
+	
+	//Grab animations
+	for(int i = 0; i < ah.numAnimations; i++)
+	{
+		//Get pointer to anim header
+		framePtr fp;
+		memcpy(&fp, &fileData[ah.animOffset + (i*sizeof(framePtr))], sizeof(framePtr));
+		
+		//Get anim header
+		animHeader anh;
+		memcpy(&anh, &fileData[fp.frameOffset], sizeof(animHeader));
+		
+		for(int j = 0; j < anh.numFrames; j++)
+		{
+			animFrameList afl;
+			memcpy(&afl, &fileData[anh.animListPtr + (j*sizeof(animFrameList))], sizeof(animFrameList));
+			
+			animFrame anf;
+			memcpy(&anf, &fileData[afl.offset], sizeof(animFrame));
+			
+			cout << "Anim frame " << anf.frameNo << ": ";
+			for(int k = 0; k < 10; k++)
+				cout << anf.unk0[k] << ", ";
+			cout << endl;
+			
+			//Output as animID_frameNo.png
+			ostringstream oss;
+			oss << sName << '/' << anh.animIDHash << '_' << setw(3) << setfill('0') << j+1 << ".png";
+			cout << "Saving " << oss.str() << endl;
+			FreeImage_Save(FIF_PNG, frameImages[anf.frameNo], oss.str().c_str());
+		}
+	}
+	
+	//Clear images from memory
+	for(vector<FIBITMAP*>::iterator i = frameImages.begin(); i != frameImages.end(); i++)
+		FreeImage_Unload(*i);
+	frameImages.clear();
+	
 	free(fileData);
 	return 0;
 }
