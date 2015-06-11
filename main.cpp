@@ -330,10 +330,6 @@ int splitImages(const char* cFilename)
 	anbHeader ah;
 	memcpy(&ah, fileData, sizeof(anbHeader));
 	
-	//cout << ah.numFrames << endl;
-	//vector<frameImg> frameImages;
-	//frameImages.reserve(ah.numFrames);
-	
 	//First, parse through and get pieces, so we know maxul/br for each frame
 	vector<list<piece> > framePieces;	//Keep track of the pieces for each frame
 	vector<frameSizeHelper> frameSizes;	//Keep track of the maximum sizes for each frame (and the image data itself)
@@ -352,8 +348,6 @@ int splitImages(const char* cFilename)
 			//Read in pieces
 			frameSizeHelper fsh;
 			fsh.data = NULL;
-			//Vec2 maxul;
-			//Vec2 maxbr;
 			fsh.maxul.x = fsh.maxul.y = fsh.maxbr.x = fsh.maxbr.y = 0;
 			list<piece> pieces;
 			
@@ -483,9 +477,6 @@ int splitImages(const char* cFilename)
 			continue;
 		}
 		
-		//if(i >= 151 && i <= 154)
-		//	cout << maxul.x << ", " << maxul.y << " " << maxbr.x << ", " << maxbr.y << endl;
-		
 		//Multiply images together if need be
 		uint8_t* dest_final = NULL;
 		if(color != NULL && mul != NULL)
@@ -506,27 +497,12 @@ int splitImages(const char* cFilename)
 			continue;
 		}
 		
-		//FIBITMAP* result = NULL;
-		//if(bPieceTogether && framePieces[i].size())
-		//	result = PieceImage(dest_final, framePieces[i], maxul, maxbr, th);
-		//else
-		//	result = imageFromPixels(dest_final, th.width, th.height);
+		//Don't piece now; save data for piecing later
 		frameSizes[i].data = dest_final;
 		frameSizes[i].th = th;
 		
-		//frameImg fi;
-		//fi.maxul = maxul;
-		//fi.maxbr = maxbr;
-		//fi.img = result;
-		
-		//Stick into our frame list and keep going
-		//if(g_bCrop)
-		//	fi = cropImage(fi);
-		//frameImages.push_back(fi);
-		
 		//Free allocated memory
 		free(dst);
-		//free(dest_final);
 	}
 	
 	//Grab animation frames
@@ -563,17 +539,6 @@ int splitImages(const char* cFilename)
 				anmh.maxbr.x = frameSizes[anf.frameNo].maxbr.x;
 			if(frameSizes[anf.frameNo].maxbr.y < anmh.maxbr.y)
 				anmh.maxbr.y = frameSizes[anf.frameNo].maxbr.y;
-			
-			//cout << "Anim frame " << anf.frameNo << ": ";
-			//for(int k = 0; k < 10; k++)
-			//	cout << anf.unk0[k] << ", ";
-			//cout << endl;
-			
-			//Output as animID_frameNo.png
-			//ostringstream oss;
-			//oss << sName << '/' << anh.animIDHash << '_' << setw(3) << setfill('0') << j+1 << ".png";
-			//cout << "Saving " << oss.str() << endl;
-			//FreeImage_Save(FIF_PNG, frameImages[anf.frameNo].img, oss.str().c_str());
 		}
 		animations.push_back(anmh);
 	}
@@ -585,6 +550,7 @@ int splitImages(const char* cFilename)
 		uint32_t curFrame = 1;
 		for(list<uint32_t>::iterator j = i->animFrames.begin(); j != i->animFrames.end(); j++)
 		{
+			//Now that we have the maximum extents for each animation, we can build the frames
 			FIBITMAP* result = NULL;
 			if(bPieceTogether && framePieces[*j].size())
 				result = PieceImage(frameSizes[*j].data, framePieces[*j], i->maxul, i->maxbr, frameSizes[*j].th);
@@ -599,11 +565,6 @@ int splitImages(const char* cFilename)
 			FreeImage_Unload(result);
 		}
 	}
-	
-	//Clear images from memory
-	//for(vector<frameImg>::iterator i = frameImages.begin(); i != frameImages.end(); i++)
-	//	FreeImage_Unload(i->img);
-	//frameImages.clear();
 	
 	for(vector<frameSizeHelper>::iterator i = frameSizes.begin(); i != frameSizes.end(); i++)
 		free(i->data);
