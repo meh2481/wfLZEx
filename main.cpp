@@ -123,6 +123,22 @@ typedef struct
 	FIBITMAP* img;
 } frameImg;
 
+typedef struct
+{
+	Vec2 maxul;
+	Vec2 maxbr;
+	uint32_t animIDHash;
+	list<uint32_t> animFrames;
+} animHelper;
+
+typedef struct
+{
+	Vec2 maxul;
+	Vec2 maxbr;
+	texHeader th;
+	uint8_t* data;
+} frameSizeHelper;
+
 
 #define PALETTE_SIZE					256
 
@@ -315,11 +331,59 @@ int splitImages(const char* cFilename)
 	memcpy(&ah, fileData, sizeof(anbHeader));
 	
 	//cout << ah.numFrames << endl;
-	vector<frameImg> frameImages;
-	frameImages.reserve(ah.numFrames);
+	//vector<frameImg> frameImages;
+	//frameImages.reserve(ah.numFrames);
+	
+	//First, parse through and get pieces, so we know maxul/br for each frame
+	vector<list<piece> > framePieces;	//Keep track of the pieces for each frame
+	vector<frameSizeHelper> frameSizes;	//Keep track of the maximum sizes for each frame (and the image data itself)
+	if(bPieceTogether)
+	{
+		for(uint64_t i = 0; i < ah.numFrames; i++)
+		{
+			//Get frame pointer
+			framePtr fp;
+			memcpy(&fp, &fileData[ah.ptrOffset + (i * sizeof(framePtr))], sizeof(framePtr));
+					
+			//Grab framedesc header
+			FrameDesc fd;
+			memcpy(&fd, &fileData[fp.frameOffset], sizeof(FrameDesc));
+			
+			//Read in pieces
+			frameSizeHelper fsh;
+			fsh.data = NULL;
+			//Vec2 maxul;
+			//Vec2 maxbr;
+			fsh.maxul.x = fsh.maxul.y = fsh.maxbr.x = fsh.maxbr.y = 0;
+			list<piece> pieces;
+			
+			PiecesDesc pd;
+			memcpy(&pd, &(fileData[fd.pieceOffset]), sizeof(PiecesDesc));
+			for(uint32_t j = 0; j < pd.numPieces; j++)
+			{
+				piece p;
+				memcpy(&p, &(fileData[fd.pieceOffset+j*sizeof(piece)+sizeof(PiecesDesc)]), sizeof(piece));
+				//Store our maximum values, so we know how large the image is
+				if(p.topLeft.x < fsh.maxul.x)
+					fsh.maxul.x = p.topLeft.x;
+				if(p.topLeft.y > fsh.maxul.y)
+					fsh.maxul.y = p.topLeft.y;
+				if(p.bottomRight.x > fsh.maxbr.x)
+					fsh.maxbr.x = p.bottomRight.x;
+				if(p.bottomRight.y < fsh.maxbr.y)
+					fsh.maxbr.y = p.bottomRight.y;
+				
+				//if(i >= 151 && i <= 154)
+				//	cout << p.topLeft.x << ", " << p.topLeft.y << ", " << p.topLeftUV.x  << ", " << p.topLeftUV.y << ", " << p.bottomRight.x << ", " << p.bottomRight.y << ", " << p.bottomRightUV.x << ", " << p.bottomRightUV.y << endl;
+				
+				pieces.push_back(p);
+				frameSizes.push_back(fsh);
+			}
+			framePieces.push_back(pieces);
+		}
+	}
 	
 	//Parse through, splitting each image out
-	uint64_t startPos = 0;
 	for(uint64_t i = 0; i < ah.numFrames; i++)
 	{
 		//Get frame pointer
@@ -419,37 +483,6 @@ int splitImages(const char* cFilename)
 			continue;
 		}
 		
-		//Read in pieces
-		Vec2 maxul;
-		Vec2 maxbr;
-		maxul.x = maxul.y = maxbr.x = maxbr.y = 0;
-		list<piece> pieces;
-		
-		if(bPieceTogether)
-		{
-			PiecesDesc pd;
-			memcpy(&pd, &(fileData[fd.pieceOffset]), sizeof(PiecesDesc));
-			for(uint32_t j = 0; j < pd.numPieces; j++)
-			{
-				piece p;
-				memcpy(&p, &(fileData[fd.pieceOffset+j*sizeof(piece)+sizeof(PiecesDesc)]), sizeof(piece));
-				//Store our maximum values, so we know how large the image is
-				if(p.topLeft.x < maxul.x)
-					maxul.x = p.topLeft.x;
-				if(p.topLeft.y > maxul.y)
-					maxul.y = p.topLeft.y;
-				if(p.bottomRight.x > maxbr.x)
-					maxbr.x = p.bottomRight.x;
-				if(p.bottomRight.y < maxbr.y)
-					maxbr.y = p.bottomRight.y;
-				
-				//if(i >= 151 && i <= 154)
-				//	cout << p.topLeft.x << ", " << p.topLeft.y << ", " << p.topLeftUV.x  << ", " << p.topLeftUV.y << ", " << p.bottomRight.x << ", " << p.bottomRight.y << ", " << p.bottomRightUV.x << ", " << p.bottomRightUV.y << endl;
-				
-				pieces.push_back(p);
-			}
-		}
-		
 		//if(i >= 151 && i <= 154)
 		//	cout << maxul.x << ", " << maxul.y << " " << maxbr.x << ", " << maxbr.y << endl;
 		
@@ -473,28 +506,31 @@ int splitImages(const char* cFilename)
 			continue;
 		}
 		
-		FIBITMAP* result = NULL;
-		if(bPieceTogether && pieces.size())
-			result = PieceImage(dest_final, pieces, maxul, maxbr, th);
-		else
-			result = imageFromPixels(dest_final, th.width, th.height);
+		//FIBITMAP* result = NULL;
+		//if(bPieceTogether && framePieces[i].size())
+		//	result = PieceImage(dest_final, framePieces[i], maxul, maxbr, th);
+		//else
+		//	result = imageFromPixels(dest_final, th.width, th.height);
+		frameSizes[i].data = dest_final;
+		frameSizes[i].th = th;
 		
-		frameImg fi;
-		fi.maxul = maxul;
-		fi.maxbr = maxbr;
-		fi.img = result;
+		//frameImg fi;
+		//fi.maxul = maxul;
+		//fi.maxbr = maxbr;
+		//fi.img = result;
 		
 		//Stick into our frame list and keep going
-		if(g_bCrop)
-			fi = cropImage(fi);
-		frameImages.push_back(fi);
+		//if(g_bCrop)
+		//	fi = cropImage(fi);
+		//frameImages.push_back(fi);
 		
 		//Free allocated memory
 		free(dst);
-		free(dest_final);
+		//free(dest_final);
 	}
 	
-	//Grab animations
+	//Grab animation frames
+	vector<animHelper> animations;
 	for(int i = 0; i < ah.numAnimations; i++)
 	{
 		//Get pointer to anim header
@@ -505,6 +541,9 @@ int splitImages(const char* cFilename)
 		animHeader anh;
 		memcpy(&anh, &fileData[fp.frameOffset], sizeof(animHeader));
 		
+		animHelper anmh;
+		anmh.animIDHash = anh.animIDHash;
+		anmh.maxul.x = anmh.maxul.y = anmh.maxbr.x = anmh.maxbr.y = 0;
 		for(int j = 0; j < anh.numFrames; j++)
 		{
 			animFrameList afl;
@@ -513,23 +552,62 @@ int splitImages(const char* cFilename)
 			animFrame anf;
 			memcpy(&anf, &fileData[afl.offset], sizeof(animFrame));
 			
+			anmh.animFrames.push_back(anf.frameNo);
+			
+			//Store maximum extents for this animation
+			if(frameSizes[anf.frameNo].maxul.x < anmh.maxul.x)
+				anmh.maxul.x = frameSizes[anf.frameNo].maxul.x;
+			if(frameSizes[anf.frameNo].maxul.y > anmh.maxul.y)
+				anmh.maxul.y = frameSizes[anf.frameNo].maxul.y;
+			if(frameSizes[anf.frameNo].maxbr.x > anmh.maxbr.x)
+				anmh.maxbr.x = frameSizes[anf.frameNo].maxbr.x;
+			if(frameSizes[anf.frameNo].maxbr.y < anmh.maxbr.y)
+				anmh.maxbr.y = frameSizes[anf.frameNo].maxbr.y;
+			
 			//cout << "Anim frame " << anf.frameNo << ": ";
 			//for(int k = 0; k < 10; k++)
 			//	cout << anf.unk0[k] << ", ";
 			//cout << endl;
 			
 			//Output as animID_frameNo.png
+			//ostringstream oss;
+			//oss << sName << '/' << anh.animIDHash << '_' << setw(3) << setfill('0') << j+1 << ".png";
+			//cout << "Saving " << oss.str() << endl;
+			//FreeImage_Save(FIF_PNG, frameImages[anf.frameNo].img, oss.str().c_str());
+		}
+		animations.push_back(anmh);
+	}
+	
+	//Now loop through, building images and saving frames
+	//TODO: Stitch together into spritesheet
+	for(vector<animHelper>::iterator i = animations.begin(); i != animations.end(); i++)
+	{
+		uint32_t curFrame = 1;
+		for(list<uint32_t>::iterator j = i->animFrames.begin(); j != i->animFrames.end(); j++)
+		{
+			FIBITMAP* result = NULL;
+			if(bPieceTogether && framePieces[*j].size())
+				result = PieceImage(frameSizes[*j].data, framePieces[*j], i->maxul, i->maxbr, frameSizes[*j].th);
+			else
+				result = imageFromPixels(frameSizes[*j].data, frameSizes[*j].th.width, frameSizes[*j].th.height);
+			
+			//Output as animID_frameNo.png
 			ostringstream oss;
-			oss << sName << '/' << anh.animIDHash << '_' << setw(3) << setfill('0') << j+1 << ".png";
+			oss << sName << '/' << i->animIDHash << '_' << setw(3) << setfill('0') << curFrame++ << ".png";
 			cout << "Saving " << oss.str() << endl;
-			FreeImage_Save(FIF_PNG, frameImages[anf.frameNo].img, oss.str().c_str());
+			FreeImage_Save(FIF_PNG, result, oss.str().c_str());
+			FreeImage_Unload(result);
 		}
 	}
 	
 	//Clear images from memory
-	for(vector<frameImg>::iterator i = frameImages.begin(); i != frameImages.end(); i++)
-		FreeImage_Unload(i->img);
-	frameImages.clear();
+	//for(vector<frameImg>::iterator i = frameImages.begin(); i != frameImages.end(); i++)
+	//	FreeImage_Unload(i->img);
+	//frameImages.clear();
+	
+	for(vector<frameSizeHelper>::iterator i = frameSizes.begin(); i != frameSizes.end(); i++)
+		free(i->data);
+	frameSizes.clear();
 	
 	free(fileData);
 	return 0;
