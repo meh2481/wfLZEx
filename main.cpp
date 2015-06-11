@@ -27,7 +27,7 @@ typedef struct
 	uint32_t headerSz;	//Probably
 	uint32_t unk0;		//Some kind of number of something?
 	uint32_t numFrames;	//Number of frames in the animation
-	uint32_t numFrames2;//Number of something else? (numFrames2 + numFrames = total number of framePtrs)
+	uint32_t numAnimations;
 	uint32_t unk2;		// 0x100 is what?
 	uint32_t unk3;		//0x77F is what?
 	uint32_t ptrOffset;	//point to framePtr[]
@@ -36,7 +36,7 @@ typedef struct
 typedef struct
 {
 	uint64_t frameOffset;	//point to FrameDesc
-} framePtr;		//Repeat anbHeader.numFrames + anbHeader.numFrames2 times
+} framePtr;		//Repeat anbHeader.numFrames + anbHeader.numAnimations times
 
 typedef struct
 {
@@ -83,6 +83,27 @@ typedef struct
 	uint8_t b;
 	uint8_t a;
 } pixel;
+
+typedef struct
+{
+	int animID;			//We don't care
+	uint32_t numFrames;	//How many frames in the animation
+	uint32_t unk0[2];
+	uint32_t animListPtr;	//point to animFrameList
+}animHeader;
+
+typedef struct
+{
+	uint64_t offset;	//point to animFrame
+}animFrameList;	//Repeat for animHeader.numFrames
+
+typedef struct
+{
+	uint32_t frameNo;
+	float unk0;
+	uint32_t unk1;
+	float unk2[8];
+}animFrame;
 
 #define PALETTE_SIZE					256
 
@@ -354,6 +375,11 @@ int splitImages(const char* cFilename)
 				
 				pieces.push_back(p);
 			}
+		}
+		
+		if(i >= 151 && i <= 154)
+		{
+			cout << maxul.x << ", " << maxul.y << " " << maxbr.x << ", " << maxbr.y << endl;
 		}
 		
 		//Multiply images together if need be
