@@ -231,6 +231,9 @@ void multiply(uint8_t* dest_final, uint8_t* color, uint8_t* mul, texHeader th, b
 
 FIBITMAP* imageFromPixels(uint8_t* imgData, uint32_t width, uint32_t height)
 {
+	if(!imgData)
+		return FreeImage_Allocate(0,0,32);
+
 	//FreeImage is broken here and you can't swap R/G/B channels upon creation. Do that manually
 	FIBITMAP* result = FreeImage_ConvertFromRawBits(imgData, width, height, ((((32 * width) + 31) / 32) * 4), 32, FI_RGBA_RED, FI_RGBA_GREEN, FI_RGBA_BLUE, true);
 	FIBITMAP* r = FreeImage_GetChannel(result, FICC_RED);
@@ -246,6 +249,9 @@ FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxb
 
 FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxbr, texHeader th, bool bFillBlack, bool bAdd)
 {
+	if(!imgData)
+		return FreeImage_Allocate(0,0,32);
+
 	Vec2 OutputSize;
 	Vec2 CenterPos;
 	OutputSize.x = -maxul.x + maxbr.x;
@@ -348,6 +354,14 @@ int splitImages(const char* cFilename)
 			
 			PiecesDesc pd;
 			memcpy(&pd, &(fileData[fd.pieceOffset]), sizeof(PiecesDesc));
+			
+			if(pd.numPieces > 1000000)	//Some of these are empty/malformed I think?
+			{				
+				fd.pieceOffset -= 4;	//????? Why is this off?
+				
+				memcpy(&pd, &(fileData[fd.pieceOffset]), sizeof(PiecesDesc));
+			}
+			
 			for(uint32_t j = 0; j < pd.numPieces; j++)
 			{
 				piece p;
@@ -388,6 +402,14 @@ int splitImages(const char* cFilename)
 		memcpy(&th, &fileData[fd.texOffset], sizeof(texHeader));
 		
 		uint64_t dataOffset = fd.texOffset + sizeof(texHeader);
+		
+		if(th.width == 0 || th.height == 0)
+		{
+			frameSizes[i].data = NULL;
+			frameSizes[i].th = th;
+			continue;
+		}
+		
 		//Decompress WFLZ data
 		uint32_t* chunk = NULL;
 		const uint32_t decompressedSize = wfLZ_GetDecompressedSize(&(fileData[dataOffset]));
@@ -645,7 +667,10 @@ int splitImages(const char* cFilename)
 	FreeImage_Unload(finalSheet);
 	
 	for(vector<frameSizeHelper>::iterator i = frameSizes.begin(); i != frameSizes.end(); i++)
-		free(i->data);
+	{
+		if(i->data)
+			free(i->data);
+	}
 	frameSizes.clear();
 	
 	free(fileData);
