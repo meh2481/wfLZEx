@@ -19,6 +19,9 @@ using namespace std;
 #define MAJOR 3
 #define MINOR 0
 
+#define ICON_WIDTH 148
+#define ICON_HEIGHT 125
+
 bool g_bColOnly;	//For images with separate color and multiply, only output the color image
 bool g_bMulOnly;	//For images with separate color and multiply, only output the color image
 bool g_bSheet;		//Align the output images into a spritesheet automatically
@@ -308,6 +311,42 @@ FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxb
 	return result;
 }
 
+void create_icon(FIBITMAP* baseImage, string sName)
+{
+	ostringstream oss;
+	oss << "output/" << sName << "_icon.png";
+	double width = FreeImage_GetWidth(baseImage);
+	double height = FreeImage_GetHeight(baseImage);
+	FIBITMAP* iconImg = FreeImage_Allocate(ICON_WIDTH, ICON_HEIGHT, 32);
+	if(width > ICON_WIDTH || height > ICON_HEIGHT)
+	{
+		double dst_width, dst_height;
+		if(width > height)
+		{
+			dst_width = ICON_WIDTH;
+			dst_height = (height/width)*((double)ICON_WIDTH);
+		}
+		else
+		{
+			dst_height = ICON_HEIGHT;
+			dst_width = (width/height)*((double)ICON_HEIGHT);
+		}
+		FIBITMAP* scaledBase = FreeImage_Rescale(baseImage, dst_width, dst_height, FILTER_BSPLINE);
+		int xPos = ((double)ICON_WIDTH - dst_width)/2.0;
+		int yPos = ((double)ICON_HEIGHT - dst_height)/2.0;
+		FreeImage_Paste(iconImg, scaledBase, xPos, yPos, 256);
+		FreeImage_Unload(scaledBase);
+	}
+	else
+	{
+		int xPos = ((double)ICON_WIDTH - (double)width)/2.0;
+		int yPos = ((double)ICON_HEIGHT - (double)height)/2.0;
+		FreeImage_Paste(iconImg, baseImage, xPos, yPos, 256);
+	}
+	cout << "Saving icon " << oss.str() << endl;
+	FreeImage_Save(FIF_PNG, iconImg, oss.str().c_str());
+	FreeImage_Unload(iconImg);
+}
 
 int splitImages(const char* cFilename)
 {
@@ -656,6 +695,9 @@ int splitImages(const char* cFilename)
 			else
 				result = imageFromPixels(frameSizes[*j].data, frameSizes[*j].th.width, frameSizes[*j].th.height);
 
+			//Create icon if we should from the first image in the first anim (not always perfect, but better than nothing)
+			if(g_bIcon && i == animations.begin() && j == i->animFrames.begin())
+				create_icon(result, sName);
 				
 			yAdd = offsetY + FreeImage_GetHeight(result);
 			
