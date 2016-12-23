@@ -699,7 +699,8 @@ int splitImages(const char* cFilename)
 			if(g_bIcon && i == animations.begin() && j == i->animFrames.begin())
 				create_icon(result, sName);
 				
-			yAdd = offsetY + FreeImage_GetHeight(result);
+			if(yAdd < offsetY + FreeImage_GetHeight(result))
+				yAdd = offsetY + FreeImage_GetHeight(result);
 			
 			//See if we should start next row in sprite sheet (if this anim is too long)
 			if(curX + FreeImage_GetWidth(result) + offsetX > totalWidthAvg)
