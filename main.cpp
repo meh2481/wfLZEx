@@ -331,7 +331,7 @@ void create_icon(FIBITMAP* baseImage, string sName)
 			dst_height = ICON_HEIGHT;
 			dst_width = (width/height)*((double)ICON_HEIGHT);
 		}
-		FIBITMAP* scaledBase = FreeImage_Rescale(baseImage, dst_width, dst_height, FILTER_BSPLINE);
+		FIBITMAP* scaledBase = FreeImage_Rescale(baseImage, dst_width, dst_height, FILTER_BICUBIC);
 		int xPos = ((double)ICON_WIDTH - dst_width)/2.0;
 		int yPos = ((double)ICON_HEIGHT - dst_height)/2.0;
 		FreeImage_Paste(iconImg, scaledBase, xPos, yPos, 256);
