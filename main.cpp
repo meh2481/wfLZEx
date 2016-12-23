@@ -16,12 +16,13 @@
 #include <iomanip>
 using namespace std;
 
-int g_DecompressFlags;
-bool g_bSeparate;
-bool g_bPieceTogether;
-bool g_bColOnly;
-bool g_bMulOnly;
-bool g_bCrop;
+#define MAJOR 3
+#define MINOR 0
+
+bool g_bColOnly;	//For images with separate color and multiply, only output the color image
+bool g_bMulOnly;	//For images with separate color and multiply, only output the color image
+bool g_bSheet;		//Align the output images into a spritesheet automatically
+bool g_bIcon;		//Create a 148*125 icon for the sheet (good for uploading to TSR)
 
 int offsetX = 1;
 int offsetY = 2;
@@ -150,6 +151,18 @@ typedef struct
 #define TEXTURE_TYPE_DXT5_COL			3	//squish::kDxt5 color, no multiply
 #define TEXTURE_TYPE_DXT1_COL_MUL		5	//squish::kDxt1 color and squish::kDxt1 multiply
 #define TEXTURE_TYPE_DXT5_COL_DXT1_MUL	6	//squish::kDxt5 color and squish::kDxt1 multiply
+
+void make_folder(string folderName)
+{
+	//Create output folder	
+#ifdef _WIN32
+	CreateDirectory(TEXT(folderName.c_str()), NULL);
+#else
+	ostringstream oss;
+	oss << "mkdir -p" << folderName;	//So this can pwn your system if the folder name is formatted correctly. Don't care
+	system(oss.str().c_str());
+#endif
+}
 
 //Crop all alpha=0 space around an image input, update maxul/br accordingly
 frameImg cropImage(frameImg input)
@@ -298,7 +311,6 @@ FIBITMAP* PieceImage(uint8_t* imgData, list<piece> pieces, Vec2 maxul, Vec2 maxb
 
 int splitImages(const char* cFilename)
 {
-	bool bPieceTogether = g_bPieceTogether;
 	uint8_t* fileData;
 	FILE* fh = fopen(cFilename, "rb");
 	if(fh == NULL)
@@ -334,56 +346,51 @@ int splitImages(const char* cFilename)
 	//First, parse through and get pieces, so we know maxul/br for each frame
 	vector<list<piece> > framePieces;	//Keep track of the pieces for each frame
 	vector<frameSizeHelper> frameSizes;	//Keep track of the maximum sizes for each frame (and the image data itself)
-	if(bPieceTogether)
+
+	for(uint64_t i = 0; i < ah.numFrames; i++)
 	{
-		for(uint64_t i = 0; i < ah.numFrames; i++)
-		{
-			//Get frame pointer
-			framePtr fp;
-			memcpy(&fp, &fileData[ah.ptrOffset + (i * sizeof(framePtr))], sizeof(framePtr));
-					
-			//Grab framedesc header
-			FrameDesc fd;
-			memcpy(&fd, &fileData[fp.frameOffset], sizeof(FrameDesc));
+		//Get frame pointer
+		framePtr fp;
+		memcpy(&fp, &fileData[ah.ptrOffset + (i * sizeof(framePtr))], sizeof(framePtr));
+				
+		//Grab framedesc header
+		FrameDesc fd;
+		memcpy(&fd, &fileData[fp.frameOffset], sizeof(FrameDesc));
+		
+		//Read in pieces
+		frameSizeHelper fsh;
+		fsh.data = NULL;
+		fsh.maxul.x = fsh.maxul.y = fsh.maxbr.x = fsh.maxbr.y = 0;
+		list<piece> pieces;
+		
+		PiecesDesc pd;
+		memcpy(&pd, &(fileData[fd.pieceOffset]), sizeof(PiecesDesc));
+		
+		if(pd.numPieces > 1000000)	//Some of these are empty/malformed I think?
+		{				
+			fd.pieceOffset -= 4;	//????? Why is this off?
 			
-			//Read in pieces
-			frameSizeHelper fsh;
-			fsh.data = NULL;
-			fsh.maxul.x = fsh.maxul.y = fsh.maxbr.x = fsh.maxbr.y = 0;
-			list<piece> pieces;
-			
-			PiecesDesc pd;
 			memcpy(&pd, &(fileData[fd.pieceOffset]), sizeof(PiecesDesc));
-			
-			if(pd.numPieces > 1000000)	//Some of these are empty/malformed I think?
-			{				
-				fd.pieceOffset -= 4;	//????? Why is this off?
-				
-				memcpy(&pd, &(fileData[fd.pieceOffset]), sizeof(PiecesDesc));
-			}
-			
-			for(uint32_t j = 0; j < pd.numPieces; j++)
-			{
-				piece p;
-				memcpy(&p, &(fileData[fd.pieceOffset+j*sizeof(piece)+sizeof(PiecesDesc)]), sizeof(piece));
-				//Store our maximum values, so we know how large the image is
-				if(p.topLeft.x < fsh.maxul.x)
-					fsh.maxul.x = p.topLeft.x;
-				if(p.topLeft.y > fsh.maxul.y)
-					fsh.maxul.y = p.topLeft.y;
-				if(p.bottomRight.x > fsh.maxbr.x)
-					fsh.maxbr.x = p.bottomRight.x;
-				if(p.bottomRight.y < fsh.maxbr.y)
-					fsh.maxbr.y = p.bottomRight.y;
-				
-				//if(i >= 151 && i <= 154)
-				//	cout << p.topLeft.x << ", " << p.topLeft.y << ", " << p.topLeftUV.x  << ", " << p.topLeftUV.y << ", " << p.bottomRight.x << ", " << p.bottomRight.y << ", " << p.bottomRightUV.x << ", " << p.bottomRightUV.y << endl;
-				
-				pieces.push_back(p);
-			}
-			frameSizes.push_back(fsh);
-			framePieces.push_back(pieces);
 		}
+		
+		for(uint32_t j = 0; j < pd.numPieces; j++)
+		{
+			piece p;
+			memcpy(&p, &(fileData[fd.pieceOffset+j*sizeof(piece)+sizeof(PiecesDesc)]), sizeof(piece));
+			//Store our maximum values, so we know how large the image is
+			if(p.topLeft.x < fsh.maxul.x)
+				fsh.maxul.x = p.topLeft.x;
+			if(p.topLeft.y > fsh.maxul.y)
+				fsh.maxul.y = p.topLeft.y;
+			if(p.bottomRight.x > fsh.maxbr.x)
+				fsh.maxbr.x = p.bottomRight.x;
+			if(p.bottomRight.y < fsh.maxbr.y)
+				fsh.maxbr.y = p.bottomRight.y;
+							
+			pieces.push_back(p);
+		}
+		frameSizes.push_back(fsh);
+		framePieces.push_back(pieces);
 	}
 	
 	//Parse through, splitting each image out
@@ -430,14 +437,18 @@ int splitImages(const char* cFilename)
 		if(th.type == TEXTURE_TYPE_DXT1_COL_MUL)
 		{
 			//Create color image
-			color = (uint8_t*)malloc(decompressedSize * 8);
 			if(!g_bMulOnly)
+			{
+				color = (uint8_t*)malloc(decompressedSize * 8);
 				squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
+			}
 			
 			//Create multiply image
-			mul = (uint8_t*)malloc(decompressedSize * 8);
-			if(!g_bColOnly)
+			if(!g_bColOnly) 
+			{
+				mul = (uint8_t*)malloc(decompressedSize * 8);
 				squish::DecompressImage(mul, th.width, th.height, dst + decompressedSize/2, squish::kDxt1);	//Second image starts halfway through decompressed data
+			}
 		}
 		else if(th.type == TEXTURE_TYPE_DXT1_COL)
 		{
@@ -478,11 +489,17 @@ int splitImages(const char* cFilename)
 		}
 		else if(th.type == TEXTURE_TYPE_DXT5_COL_DXT1_MUL)
 		{
-			color = (uint8_t*)malloc(th.width * th.height * 4);
-			squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
+			if(!g_bMulOnly)
+			{
+				color = (uint8_t*)malloc(th.width * th.height * 4);
+				squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
+			}
 			
-			mul = (uint8_t*)malloc(th.width * th.height * 4);
-			squish::DecompressImage(mul, th.width, th.height, dst + th.width * th.height / 2, squish::kDxt5);
+			if(!g_bColOnly)
+			{
+				mul = (uint8_t*)malloc(th.width * th.height * 4);
+				squish::DecompressImage(mul, th.width, th.height, dst + th.width * th.height / 2, squish::kDxt5);
+			}
 			
 			bUseMul = true;
 		}
@@ -615,10 +632,13 @@ int splitImages(const char* cFilename)
 	}
 	
 	//Allocate final image, and piece
-	FIBITMAP* finalSheet = FreeImage_Allocate(finalX, finalY, 32);
-	RGBQUAD q = {128,128,0,255};
-	FreeImage_FillBackground(finalSheet, (const void *)&q);
-	
+	FIBITMAP* finalSheet;
+	if(g_bSheet)
+	{
+		finalSheet = FreeImage_Allocate(finalX, finalY, 32);
+		RGBQUAD q = {128,128,0,255};
+		FreeImage_FillBackground(finalSheet, (const void *)&q);
+	}
 	int curX = offsetX;
 	int curY = offsetY/2;
 	//Now loop through, building images and stitching frames into the final image
@@ -626,14 +646,16 @@ int splitImages(const char* cFilename)
 	{
 		uint32_t curFrame = 1;
 		int yAdd = 0;
+		int curFrameCnt = 0;
 		for(list<uint32_t>::iterator j = i->animFrames.begin(); j != i->animFrames.end(); j++)
 		{
 			//Now that we have the maximum extents for each animation, we can build the frames
 			FIBITMAP* result = NULL;
-			if(bPieceTogether && framePieces[*j].size())
+			if(framePieces[*j].size())
 				result = PieceImage(frameSizes[*j].data, framePieces[*j], i->maxul, i->maxbr, frameSizes[*j].th);
 			else
 				result = imageFromPixels(frameSizes[*j].data, frameSizes[*j].th.width, frameSizes[*j].th.height);
+
 				
 			yAdd = offsetY + FreeImage_GetHeight(result);
 			
@@ -645,12 +667,19 @@ int splitImages(const char* cFilename)
 			}
 			
 			//Paste this into our final image
-			FreeImage_Paste(finalSheet, result, curX, curY, 300);
-			
-			//ostringstream oss;
-			//oss << "output/" << sName << '_' << i->animIDHash << '_' << setw(3) << setfill('0') << *j << ".png";
-			//cout << "Saving " << oss.str() << endl;
-			//FreeImage_Save(FIF_PNG, result, oss.str().c_str());
+			if(g_bSheet)
+				FreeImage_Paste(finalSheet, result, curX, curY, 300);
+			else
+			{
+				ostringstream oss;
+				oss << "output/" << sName;
+				make_folder(oss.str());
+				oss << '/' << i->animIDHash;
+				make_folder(oss.str());
+				oss << '/' << setw(3) << setfill('0') << ++curFrameCnt << ".png";
+				cout << "Saving " << oss.str() << endl;
+				FreeImage_Save(FIF_PNG, result, oss.str().c_str());
+			}
 		
 			curX += offsetX + FreeImage_GetWidth(result);
 			FreeImage_Unload(result);
@@ -659,12 +688,15 @@ int splitImages(const char* cFilename)
 		curX = offsetX;
 	}
 	
-	//Save final sheet
-	ostringstream oss;
-	oss << "output/" << sName << ".png";
-	cout << "Saving " << oss.str() << endl;
-	FreeImage_Save(FIF_PNG, finalSheet, oss.str().c_str());
-	FreeImage_Unload(finalSheet);
+	//Save final sheet if we should
+	if(g_bSheet)
+	{
+		ostringstream oss;
+		oss << "output/" << sName << ".png";
+		cout << "Saving " << oss.str() << endl;
+		FreeImage_Save(FIF_PNG, finalSheet, oss.str().c_str());
+		FreeImage_Unload(finalSheet);
+	}
 	
 	for(vector<frameSizeHelper>::iterator i = frameSizes.begin(); i != frameSizes.end(); i++)
 	{
@@ -677,52 +709,59 @@ int splitImages(const char* cFilename)
 	return 0;
 }
 
+#define TAB_DELIM "\t"
+
+void print_usage()
+{
+	cout << "wfLZEx v" << MAJOR << "." << MINOR << endl;
+	cout << "Tool for extracting images from WayForward animation (.anb) files" << endl << endl;
+	cout << "Usage: wfLZEx [flags] [files.anb]" << endl << endl;
+	cout << "Supported flags:" << endl;
+	cout << "--col-only" << TAB_DELIM << "For images that contain separate color and multiply channels, only output images containing the color channel" << endl << endl;
+	cout << "--mul-only" << TAB_DELIM << "For images that contain separate color and multiply channels, only output images containing the multiply channel" << endl << endl;
+	cout << "--no-sheet" << TAB_DELIM << "Output images separately, without stitching together into sprite sheets (default: stitch into sheets)" << endl << endl;
+	cout << "--icon    " << TAB_DELIM << "Output a 148*125 icon along with each sheet (default: no icon)" << endl << endl;
+	cout << "--help    " << TAB_DELIM << "Display this help screen" << endl << endl;
+}
+
 int main(int argc, char** argv)
 {
-	g_DecompressFlags = squish::kDxt1;
-	g_bSeparate = false;
-	g_bPieceTogether = true;
+	if(argc < 2)
+	{
+		print_usage();
+		return 0;
+	}
 	g_bColOnly = g_bMulOnly = false;
-	g_bCrop = false;
+	g_bSheet = true;
+	g_bIcon = false;
 	FreeImage_Initialise();
-	//Create output folder	
-#ifdef _WIN32
-	CreateDirectory(TEXT("output"), NULL);
-#else
-	int result = system("mkdir -p output");
-#endif
+
 	list<string> sFilenames;
 	//Parse commandline
 	for(int i = 1; i < argc; i++)
 	{
 		string s = argv[i];
-		if(s == "-dxt1")
-			g_DecompressFlags = squish::kDxt1;
-		else if(s == "-dxt3")
-			g_DecompressFlags = squish::kDxt3;
-		else if(s == "-dxt5")
-			g_DecompressFlags = squish::kDxt5;
-		else if(s == "-separate")
-			g_bSeparate = true;
-		else if(s == "-col-only")
+		if(s == "--col-only")
 		{
 			g_bColOnly = true;
 			g_bMulOnly = false;
-			g_bSeparate = true;
 		}
-		else if(s == "-mul-only")
+		else if(s == "--mul-only")
 		{
 			g_bMulOnly = true;
 			g_bColOnly = false;
-			g_bSeparate = true;
 		}
-		else if(s == "-nopiece")
-			g_bPieceTogether = false;
-		else if(s == "-crop")
-			g_bCrop = true;
+		else if(s == "--no-sheet")
+			g_bSheet = false;
+		else if(s == "--icon")
+			g_bIcon = true;
+		else if(s == "--help")
+			print_usage();
 		else
 			sFilenames.push_back(s);
 	}
+	if(!sFilenames.empty())
+		make_folder("output");
 	//Decompress ANB files
 	for(list<string>::iterator i = sFilenames.begin(); i != sFilenames.end(); i++)
 		splitImages((*i).c_str());
