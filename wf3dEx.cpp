@@ -116,6 +116,7 @@ void extractTexture(uint8_t* fileData, blobTextureData texData)
 	string outputFilename = filename + ".png";
 	cout << "Saving image " << outputFilename << endl;
 	FIBITMAP* result = imageFromPixels(imgData, texData.width, texData.height);
+	FreeImage_FlipVertical(result);	//These seem to always be upside-down
 	FreeImage_Save(FIF_PNG, result, outputFilename.c_str());
 	FreeImage_Unload(result);
 	
