@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstring>
 #include <iomanip>
+#include <fstream>
 using namespace std;
 
 //------------------------------
@@ -84,9 +85,9 @@ typedef struct {
 } faceDataHeader;
 
 typedef struct {
-	uint32_t face1;
-	uint32_t face2;
-	uint32_t face3;
+	uint32_t v1;
+	uint32_t v2;
+	uint32_t v3;
 } faceIndex;
 
 typedef struct {
@@ -107,7 +108,7 @@ typedef struct {
 	float z;
 	float u;
 	float v;
-	float w;	//Not sure what this is for
+	uint32_t w;	//Not sure what this is for
 } vertEntry;
 
 //------------------------------
@@ -179,6 +180,118 @@ void extractTexture(uint8_t* fileData, blobTextureData texData)
 	free(imgData);
 }
 
+double convertFromHiLo(uint32_t hi, uint32_t lo)
+{
+	uint64_t val = lo;
+	val |= (((uint64_t)hi) << 32);
+	return *((double*)&val);
+}
+
+float reverseFloat( const float inFloat )
+{
+   float retVal;
+   char *floatToConvert = ( char* ) & inFloat;
+   char *returnFloat = ( char* ) & retVal;
+
+   // swap the bytes into a temporary buffer
+   returnFloat[0] = floatToConvert[3];
+   returnFloat[1] = floatToConvert[2];
+   returnFloat[2] = floatToConvert[1];
+   returnFloat[3] = floatToConvert[0];
+
+   return retVal;
+}
+
+vector<vertEntry> extractVertices(uint8_t* fileData, blobVertexData bvd, string filename)
+{
+	vertDataHeader vdh;
+	memcpy(&vdh, &fileData[bvd.offset], sizeof(vertDataHeader));
+	
+	//string outFilename = filename + ".vertices.txt";
+	//ofstream ofile;
+	//ofile.open(outFilename.c_str());
+	vector<vertEntry> vertices;
+	
+	for(uint32_t i = 0; i < bvd.count; i++)
+	{
+		uint32_t offset = bvd.offset+sizeof(vertDataHeader)+i*24;
+		
+		vertEntry ve;
+		//memcpy(&ve, &fileData[offset], sizeof(vertEntry));
+		memcpy(&ve.x, &fileData[offset], sizeof(float));
+		memcpy(&ve.y, &fileData[offset+4], sizeof(float));
+		memcpy(&ve.z, &fileData[offset+8], sizeof(float));
+		
+		memcpy(&ve.u, &fileData[offset+12], sizeof(float));
+		memcpy(&ve.w, &fileData[offset+16], sizeof(uint32_t));
+		memcpy(&ve.v, &fileData[offset+20], sizeof(float));
+		
+		ve.u *= ve.w;//reverseFloat(ve.u);
+		ve.v *= ve.w;//reverseFloat(ve.v);
+		//memcpy(&second, &fileData[offset+20], sizeof(uint32_t));
+		
+		//first >>= 16;
+		//ve.u = 0.5;//*((double*)&first);
+		//ve.v = convertFromHiLo(mid & 0xFFFF, second);
+		
+		
+		//memcpy(&ve.u, &fileData[offset+12], sizeof(double));
+		//memcpy(&ve.w, &fileData[offset+16], sizeof(float));
+		//memcpy(&ve.v, &fileData[offset+16], sizeof(double));
+		
+		vertices.push_back(ve);
+		//ofile << "v " << ve.x << " " << ve.y << " " << ve.z << endl;
+	}
+	//ofile.close();
+	return vertices;
+}
+
+vector<faceIndex> extractFaces(uint8_t* fileData, blobFaceData bfd, string filename)
+{
+	faceDataHeader fdh;
+	memcpy(&fdh, &fileData[bfd.offset], sizeof(faceDataHeader));
+	
+	//string outFilename = filename + ".faces.txt";
+	//ofstream ofile;
+	//ofile.open(outFilename.c_str());
+	vector<faceIndex> faces;
+	
+	for(uint32_t i = 0; i < bfd.numIndices / 3; i++)
+	{
+		faceIndex fi;
+		memcpy(&fi, &fileData[bfd.offset+sizeof(faceDataHeader)+i*sizeof(faceIndex)], sizeof(faceIndex));
+		
+		faces.push_back(fi);
+		//ofile << "f " << fi.v1+1 << " " << fi.v2+1 << " " << fi.v3+1 << endl;
+	}
+	//ofile.close();
+	return faces;
+}
+
+void outputObj(string filename, vector<vertEntry> vertices, vector<faceIndex> faces)
+{
+	ofstream ofile;
+	ofile.open(filename.c_str());
+	
+	for(int i = 0; i < vertices.size(); i++)
+		ofile << "v " << vertices[i].x << " " << vertices[i].y << " " << vertices[i].z << endl;
+	
+	for(int i = 0; i < vertices.size(); i++)
+		ofile << "vt " << vertices[i].u << " " << vertices[i].v << " " << vertices[i].w << endl;
+	
+	//ofile << "vn 0.50 0.50" << endl;
+	
+	//ofile << "s off" << endl;
+	
+	for(int i = 0; i < faces.size(); i++)
+		ofile << "f " 
+		      << faces[i].v1+1 << "/" << faces[i].v1+1 << ' ' 
+			  << faces[i].v2+1 << "/" << faces[i].v2+1 << ' ' 
+			  << faces[i].v3+1 << "/" << faces[i].v3+1 << endl;
+	
+	ofile.close();
+}
+
 void decomp(string filename) 
 {
 	FILE* fh = fopen(filename.c_str(), "rb");
@@ -204,6 +317,10 @@ void decomp(string filename)
 		return;
 	}
 	
+	//Assume only one per for now...
+	vector<vertEntry> vertices;
+	vector<faceIndex> faces;
+	
 	//Read the offset list
 	for(uint32_t curOffset = 0; curOffset < header.numOffsets; curOffset++)
 	{
@@ -225,8 +342,24 @@ void decomp(string filename)
 			
 			//Extract texture
 			extractTexture(fileData, texData);
+		} else if(blobHeader.type == BLOB_TYPE_VERTICES) {
+			blobVertexData bvd;
+			memcpy(&bvd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobVertexData));
+			
+			vertices = extractVertices(fileData, bvd, filename);
+		} else if(blobHeader.type == BLOB_TYPE_FACES) {
+			blobFaceData bfd;
+			memcpy(&bfd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobFaceData));
+			
+			faces = extractFaces(fileData, bfd, filename);
 		}
 	}
+	
+	outputObj(filename + ".obj", vertices, faces);
+	
+	//vector<face> faces;
+	//vector<vert> vertices;
+	//vector<uv> uvs;
 	
 	//Cleanup
 	free(fileData);
