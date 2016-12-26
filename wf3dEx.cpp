@@ -30,7 +30,9 @@ typedef struct {
 	uint64_t offset;	//Offset in file to blobOffset object
 } offsetList;
 
-#define BLOB_TYPE_TEXTURE 0x1
+#define BLOB_TYPE_TEXTURE 	0x1
+#define BLOB_TYPE_VERTICES	0x2
+#define BLOB_TYPE_FACES		0x3
 
 typedef struct {
 	uint32_t type;		//One of the blob types above
@@ -39,16 +41,35 @@ typedef struct {
 	//Followed by blob data
 } blobOffset;
 
+#define IMAGE_TYPE_DXT1	0x31
+#define IMAGE_TYPE_DXT5	0x64
+
 typedef struct {
 	uint32_t width;
 	uint32_t height;
 	uint32_t pad1;
-	uint32_t unk1;	//Seems to always be 31
+	uint32_t type;	//One of the image types above
 	uint64_t hash;
 	uint32_t imageDataOffset;	//Point to imgDataHeader
 	uint32_t unkOffset;
 	uint32_t filenameOffset;	//Point to filenameHeader
 } blobTextureData;
+
+typedef struct {
+	uint32_t numIndices;	//divide by 3 for number of faces
+	uint32_t type;	//Always 2?
+	uint64_t hash;
+	uint32_t offset;	//To faceDataHeader
+	uint32_t size;
+} blobFaceData;
+
+typedef struct {
+	uint32_t count;	//of something
+	uint32_t pad;	//Always 0?
+	uint64_t hash;
+	uint32_t offset;	//To vertDataHeader
+	uint32_t size;		//Of vertex data
+} blobVertexData;
 
 typedef struct {
 	uint32_t unk;	//Always FFFFFF00
@@ -58,9 +79,36 @@ typedef struct {
 
 typedef struct {
 	uint32_t unk;	//Always FFFFFF00
+	uint32_t size;
+	//Followed by faceIndexes
+} faceDataHeader;
+
+typedef struct {
+	uint32_t face1;
+	uint32_t face2;
+	uint32_t face3;
+} faceIndex;
+
+typedef struct {
+	uint32_t unk;	//Always FFFFFF00
 	uint32_t filenameLen;
 	//Followed by filenameLen characters
 } filenameHeader;
+
+typedef struct {
+	uint32_t unk;	//Always FFFFFF00
+	uint32_t size;
+	//Followed by vertEntrys
+} vertDataHeader;
+
+typedef struct {
+	float x;
+	float y;
+	float z;
+	float u;
+	float v;
+	float w;	//Not sure what this is for
+} vertEntry;
 
 //------------------------------
 
@@ -87,14 +135,14 @@ void extractTexture(uint8_t* fileData, blobTextureData texData)
 	memcpy(&fnh, &fileData[texData.filenameOffset], sizeof(filenameHeader));
 	
 	string filename = (const char*) &fileData[texData.filenameOffset + sizeof(filenameHeader)];
-	cout << "Filename for image is " << filename << endl;
-	cout << "Decompressing image at " << texData.imageDataOffset << endl;
+	//cout << "Filename for image is " << filename << endl;
+	//cout << "Decompressing image at " << texData.imageDataOffset << endl;
 	
 	//Grab image data header
 	imgDataHeader idh;
 	memcpy(&idh, &fileData[texData.imageDataOffset], sizeof(imgDataHeader));
 	
-	cout << "Compressed size: " << idh.compressedSize << endl;
+	//cout << "Compressed size: " << idh.compressedSize << endl;
 	uint32_t dataOffset = texData.imageDataOffset + sizeof(imgDataHeader);
 	uint32_t* chunk = NULL;
 	const uint32_t decompressedSize = wfLZ_GetDecompressedSize(&(fileData[dataOffset]));
@@ -110,7 +158,14 @@ void extractTexture(uint8_t* fileData, blobTextureData texData)
 	
 	//Decompress squished image (Assume DXT1 for now)
 	uint8_t* imgData = (uint8_t*)malloc(decompressedSize * 8);
-	squish::DecompressImage(imgData, texData.width, texData.height, dst, squish::kDxt1);
+	int flags = squish::kDxt1;
+	if(texData.type == IMAGE_TYPE_DXT1)
+		flags = squish::kDxt1;
+	else if(texData.type == IMAGE_TYPE_DXT5)
+		flags = squish::kDxt5;
+	else
+		cout << "Unknown flags " << texData.type << " for image. Assuming DXT1..." << endl;
+	squish::DecompressImage(imgData, texData.width, texData.height, dst, flags);
 	
 	//Save image as PNG
 	string outputFilename = filename + ".png";
@@ -186,8 +241,6 @@ int main(int argc, char** argv)
 		string s = argv[i];
 		sFilenames.push_back(s);
 	}
-	//if(!sFilenames.empty())
-	//	make_folder("output");
 	//Decompress files
 	for(list<string>::iterator i = sFilenames.begin(); i != sFilenames.end(); i++)
 		decomp(*i);
