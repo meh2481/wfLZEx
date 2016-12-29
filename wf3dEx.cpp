@@ -64,9 +64,12 @@ typedef struct {
 	uint32_t size;
 } blobFaceData;
 
+#define VERT_DATA_WEIGHT_UV 	0
+#define VERT_DATA_WEIGHT_TAN_UV	1
+
 typedef struct {
 	uint32_t count;	//of something
-	uint32_t pad;	//Always 0?
+	uint32_t flags;	//one of above VERT_DATA flags
 	uint64_t hash;
 	uint32_t offset;	//To vertDataHeader
 	uint32_t size;		//Of vertex data
@@ -106,18 +109,63 @@ typedef struct {
 	float x;
 	float y;
 	float z;
+	uint16_t unk1;
+	uint16_t unk2;
+	uint16_t unk3;
+	uint16_t unk4;
+	uint16_t u;
+	uint16_t v;
+} vertEntryWeightUV;
+
+typedef struct {
+	float x;
+	float y;
+	float z;
+	uint32_t unk1;
+	uint32_t unk4;
+	uint32_t unk5;
+	uint32_t unk6;
+	uint16_t u;
+	uint16_t v;
+} vertEntryWeightTanUV;
+
+//------------------------------
+// Helper classes
+//------------------------------
+
+typedef struct {
+	float x;
+	float y;
+	float z;
 	float u;
 	float v;
-	uint32_t w;	//Not sure what this is for
-} vertEntry;
+} vertHelper;
 
 //------------------------------
 
+#define MAN_BITMASK 0x3FF
+#define EX_MAX 0x70
+
+//Convert a half-float to a full float value
+float halfFloat(uint16_t in)
+{
+	uint32_t man = in & MAN_BITMASK;		//Mantissa is lower 10 bits
+    uint32_t ex = -EX_MAX;	//Negative unsigned bitwise magic
+	if(in & 0x7C00)				//Exponent is upper 6 bits minus topmost for sign
+		ex = (in >> 10) & 0x1F;
+	else if(man) 
+	{
+		man <<= 1;
+		for(ex = 0; !(man & 0x400); ex--)
+			man <<= 1;
+		man &= MAN_BITMASK;
+	}
+	uint32_t tmp = ((in & 0x8000) << 16) | ((ex + EX_MAX) << 23) | (man << 13);
+	return *(float*)&tmp;
+}
+
 FIBITMAP* imageFromPixels(uint8_t* imgData, uint32_t width, uint32_t height)
 {
-	if(!imgData)
-		return FreeImage_Allocate(0,0,32);
-
 	//FreeImage is broken here and you can't swap R/G/B channels upon creation. Do that manually
 	FIBITMAP* result = FreeImage_ConvertFromRawBits(imgData, width, height, ((((32 * width) + 31) / 32) * 4), 32, FI_RGBA_RED, FI_RGBA_GREEN, FI_RGBA_BLUE, true);
 	FIBITMAP* r = FreeImage_GetChannel(result, FICC_RED);
@@ -180,74 +228,55 @@ void extractTexture(uint8_t* fileData, blobTextureData texData)
 	free(imgData);
 }
 
-double convertFromHiLo(uint32_t hi, uint32_t lo)
-{
-	uint64_t val = lo;
-	val |= (((uint64_t)hi) << 32);
-	return *((double*)&val);
-}
-
-float reverseFloat( const float inFloat )
-{
-   float retVal;
-   char *floatToConvert = ( char* ) & inFloat;
-   char *returnFloat = ( char* ) & retVal;
-
-   // swap the bytes into a temporary buffer
-   returnFloat[0] = floatToConvert[3];
-   returnFloat[1] = floatToConvert[2];
-   returnFloat[2] = floatToConvert[1];
-   returnFloat[3] = floatToConvert[0];
-
-   return retVal;
-}
-
-vector<vertEntry> extractVertices(uint8_t* fileData, blobVertexData bvd, string filename)
+vector<vertHelper> extractVertices(uint8_t* fileData, blobVertexData bvd, string filename)
 {
 	vertDataHeader vdh;
 	memcpy(&vdh, &fileData[bvd.offset], sizeof(vertDataHeader));
 	
-	//string outFilename = filename + ".vertices.txt";
-	//ofstream ofile;
-	//ofile.open(outFilename.c_str());
-	vector<vertEntry> vertices;
+	vector<vertHelper> vertices;
 	
 	for(uint32_t i = 0; i < bvd.count; i++)
 	{
-		uint32_t offset = bvd.offset+sizeof(vertDataHeader)+i*24;
-		
-		vertEntry ve;
-		//memcpy(&ve, &fileData[offset], sizeof(vertEntry));
-		memcpy(&ve.x, &fileData[offset], sizeof(float));
-		memcpy(&ve.y, &fileData[offset+4], sizeof(float));
-		memcpy(&ve.z, &fileData[offset+8], sizeof(float));
-		
-		memcpy(&ve.u, &fileData[offset+12], sizeof(float));
-		memcpy(&ve.w, &fileData[offset+16], sizeof(uint32_t));
-		memcpy(&ve.v, &fileData[offset+20], sizeof(float));
-		
-		ve.u *= ve.w;//reverseFloat(ve.u);
-		ve.v *= ve.w;//reverseFloat(ve.v);
-		//memcpy(&second, &fileData[offset+20], sizeof(uint32_t));
-		
-		//first >>= 16;
-		//ve.u = 0.5;//*((double*)&first);
-		//ve.v = convertFromHiLo(mid & 0xFFFF, second);
-		
-		
-		//memcpy(&ve.u, &fileData[offset+12], sizeof(double));
-		//memcpy(&ve.w, &fileData[offset+16], sizeof(float));
-		//memcpy(&ve.v, &fileData[offset+16], sizeof(double));
-		
-		vertices.push_back(ve);
-		//ofile << "v " << ve.x << " " << ve.y << " " << ve.z << endl;
+		if(bvd.flags == VERT_DATA_WEIGHT_UV)
+		{
+			uint32_t offset = bvd.offset+sizeof(vertDataHeader)+i*sizeof(vertEntryWeightUV);
+			
+			vertEntryWeightUV ve;
+			memcpy(&ve, &fileData[offset], sizeof(vertEntryWeightUV));
+			
+			vertHelper vh;
+			vh.x = ve.x;
+			vh.y = ve.y;
+			vh.z = ve.z;
+			vh.u = halfFloat(ve.u);
+			vh.v = halfFloat(ve.v);
+			
+			vertices.push_back(vh);
+		}
+		else if(bvd.flags == VERT_DATA_WEIGHT_TAN_UV)
+		{
+			uint32_t offset = bvd.offset+sizeof(vertDataHeader)+i*sizeof(vertEntryWeightTanUV);
+			
+			vertEntryWeightTanUV ve;
+			memcpy(&ve, &fileData[offset], sizeof(vertEntryWeightTanUV));
+			
+			vertHelper vh;
+			vh.x = ve.x;
+			vh.y = ve.y;
+			vh.z = ve.z;
+			vh.u = halfFloat(ve.u);
+			vh.v = halfFloat(ve.v);
+			
+			vertices.push_back(vh);
+		}
+		else
+			cout << "ERR: Unknown vert type: " << bvd.flags << endl;
 	}
-	//ofile.close();
 	return vertices;
 }
 
 vector<faceIndex> extractFaces(uint8_t* fileData, blobFaceData bfd, string filename)
-{
+{	
 	faceDataHeader fdh;
 	memcpy(&fdh, &fileData[bfd.offset], sizeof(faceDataHeader));
 	
@@ -268,16 +297,25 @@ vector<faceIndex> extractFaces(uint8_t* fileData, blobFaceData bfd, string filen
 	return faces;
 }
 
-void outputObj(string filename, vector<vertEntry> vertices, vector<faceIndex> faces)
+void outputObj(string filename, vector<vertHelper> vertices, vector<faceIndex> faces)
 {
+	if(!vertices.size() || !faces.size())
+	{
+		cout << "WARN: No object to output" << endl;
+		return; //Nothing to do
+	}
+	
+	cout << "Saving obj " << filename << endl;
+	
 	ofstream ofile;
 	ofile.open(filename.c_str());
 	
 	for(int i = 0; i < vertices.size(); i++)
 		ofile << "v " << vertices[i].x << " " << vertices[i].y << " " << vertices[i].z << endl;
 	
+	//TODO Other things than uv; there's bones and other such stuff here also
 	for(int i = 0; i < vertices.size(); i++)
-		ofile << "vt " << vertices[i].u << " " << vertices[i].v << " " << vertices[i].w << endl;
+		ofile << "vt " << vertices[i].u << " " << vertices[i].v << endl;
 	
 	//ofile << "vn 0.50 0.50" << endl;
 	
@@ -318,8 +356,10 @@ void decomp(string filename)
 	}
 	
 	//Assume only one per for now...
-	vector<vertEntry> vertices;
+	vector<vertHelper> vertices;
 	vector<faceIndex> faces;
+	
+	char curOut = '0';
 	
 	//Read the offset list
 	for(uint32_t curOffset = 0; curOffset < header.numOffsets; curOffset++)
@@ -347,6 +387,11 @@ void decomp(string filename)
 			memcpy(&bvd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobVertexData));
 			
 			vertices = extractVertices(fileData, bvd, filename);
+			
+			//Seems to go in order faces-vertices-faces-vertices
+			outputObj(filename + curOut++ + ".obj", vertices, faces);
+			faces.clear();
+			vertices.clear();
 		} else if(blobHeader.type == BLOB_TYPE_FACES) {
 			blobFaceData bfd;
 			memcpy(&bfd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobFaceData));
@@ -355,7 +400,6 @@ void decomp(string filename)
 		}
 	}
 	
-	outputObj(filename + ".obj", vertices, faces);
 	
 	//vector<face> faces;
 	//vector<vert> vertices;
