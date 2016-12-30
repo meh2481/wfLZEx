@@ -17,6 +17,9 @@
 #include <fstream>
 using namespace std;
 
+#define MAJOR 0
+#define MINOR 1
+
 //------------------------------
 // WF3D file format structs
 //------------------------------
@@ -109,10 +112,8 @@ typedef struct {
 	float x;
 	float y;
 	float z;
-	uint16_t unk1;
-	uint16_t unk2;
-	uint16_t unk3;
-	uint16_t unk4;
+	uint8_t weights[4];
+	uint8_t indices[4];
 	uint16_t u;
 	uint16_t v;
 } vertEntryWeightUV;
@@ -121,10 +122,9 @@ typedef struct {
 	float x;
 	float y;
 	float z;
-	uint32_t unk1;
-	uint32_t unk4;
-	uint32_t unk5;
-	uint32_t unk6;
+	uint8_t weights[4];
+	uint8_t indices[4];
+	uint32_t tangent[2];
 	uint16_t u;
 	uint16_t v;
 } vertEntryWeightTanUV;
@@ -184,14 +184,11 @@ void extractTexture(uint8_t* fileData, blobTextureData texData)
 	memcpy(&fnh, &fileData[texData.filenameOffset], sizeof(filenameHeader));
 	
 	string filename = (const char*) &fileData[texData.filenameOffset + sizeof(filenameHeader)];
-	//cout << "Filename for image is " << filename << endl;
-	//cout << "Decompressing image at " << texData.imageDataOffset << endl;
 	
 	//Grab image data header
 	imgDataHeader idh;
 	memcpy(&idh, &fileData[texData.imageDataOffset], sizeof(imgDataHeader));
 	
-	//cout << "Compressed size: " << idh.compressedSize << endl;
 	uint32_t dataOffset = texData.imageDataOffset + sizeof(imgDataHeader);
 	uint32_t* chunk = NULL;
 	const uint32_t decompressedSize = wfLZ_GetDecompressedSize(&(fileData[dataOffset]));
@@ -297,12 +294,15 @@ vector<faceIndex> extractFaces(uint8_t* fileData, blobFaceData bfd, string filen
 	return faces;
 }
 
-void outputObj(string filename, vector<vertHelper> vertices, vector<faceIndex> faces)
+void outputObj(string filename, vector<vector<vertHelper> > vertices, vector<vector<faceIndex> > faces)
 {
 	if(!vertices.size() || !faces.size())
-	{
-		cout << "WARN: No object to output" << endl;
 		return; //Nothing to do
+	
+	if(vertices.size() != faces.size())
+	{
+		cout << "ERR: vertices/faces mismatch in size" << endl;
+		return;
 	}
 	
 	cout << "Saving obj " << filename << endl;
@@ -310,22 +310,31 @@ void outputObj(string filename, vector<vertHelper> vertices, vector<faceIndex> f
 	ofstream ofile;
 	ofile.open(filename.c_str());
 	
-	for(int i = 0; i < vertices.size(); i++)
-		ofile << "v " << vertices[i].x << " " << vertices[i].y << " " << vertices[i].z << endl;
+	ofile << "# Created with wf3dEx v" << MAJOR << '.' << MINOR << endl;
 	
-	//TODO Other things than uv; there's bones and other such stuff here also
-	for(int i = 0; i < vertices.size(); i++)
-		ofile << "vt " << vertices[i].u << " " << vertices[i].v << endl;
+	int curAdd = 1;
 	
-	//ofile << "vn 0.50 0.50" << endl;
+	for(int j = 0; j < faces.size(); j++)
+	{
+		ofile << "o " << filename << '_' << j+1 << endl;
 	
-	//ofile << "s off" << endl;
-	
-	for(int i = 0; i < faces.size(); i++)
-		ofile << "f " 
-		      << faces[i].v1+1 << "/" << faces[i].v1+1 << ' ' 
-			  << faces[i].v2+1 << "/" << faces[i].v2+1 << ' ' 
-			  << faces[i].v3+1 << "/" << faces[i].v3+1 << endl;
+		for(int i = 0; i < vertices[j].size(); i++)
+			ofile << "v " << vertices[j][i].x << " " << vertices[j][i].y << " " << vertices[j][i].z << endl;
+		
+		//TODO Other things than uv; there's bones and other such stuff here also
+		for(int i = 0; i < vertices[j].size(); i++)
+			ofile << "vt " << vertices[j][i].u << " " << vertices[j][i].v << endl;
+		
+		for(int i = 0; i < faces[j].size(); i++)
+			ofile << "f " 
+				  << faces[j][i].v1+curAdd << "/" << faces[j][i].v1+curAdd << ' ' 
+				  << faces[j][i].v2+curAdd << "/" << faces[j][i].v2+curAdd << ' ' 
+				  << faces[j][i].v3+curAdd << "/" << faces[j][i].v3+curAdd << endl;
+		
+		ofile << endl;
+		
+		curAdd += vertices[j].size();
+	}
 	
 	ofile.close();
 }
@@ -356,10 +365,8 @@ void decomp(string filename)
 	}
 	
 	//Assume only one per for now...
-	vector<vertHelper> vertices;
-	vector<faceIndex> faces;
-	
-	char curOut = '0';
+	vector<vector<vertHelper> > vertices;
+	vector<vector<faceIndex> > faces;
 	
 	//Read the offset list
 	for(uint32_t curOffset = 0; curOffset < header.numOffsets; curOffset++)
@@ -386,31 +393,35 @@ void decomp(string filename)
 			blobVertexData bvd;
 			memcpy(&bvd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobVertexData));
 			
-			vertices = extractVertices(fileData, bvd, filename);
-			
 			//Seems to go in order faces-vertices-faces-vertices
-			outputObj(filename + curOut++ + ".obj", vertices, faces);
-			faces.clear();
-			vertices.clear();
+			vertices.push_back(extractVertices(fileData, bvd, filename));
 		} else if(blobHeader.type == BLOB_TYPE_FACES) {
 			blobFaceData bfd;
 			memcpy(&bfd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobFaceData));
 			
-			faces = extractFaces(fileData, bfd, filename);
+			faces.push_back(extractFaces(fileData, bfd, filename));
 		}
 	}
 	
-	
-	//vector<face> faces;
-	//vector<vert> vertices;
-	//vector<uv> uvs;
+	outputObj(filename + ".obj", vertices, faces);
 	
 	//Cleanup
 	free(fileData);
 }
 
+void print_usage()
+{
+	cout << "wf3dEx v" << MAJOR << '.' << MINOR << endl << endl;
+	cout << "Usage: wf3dEx [wf3d files]" << endl;
+}
+
 int main(int argc, char** argv)
 {
+	if(argc < 2)
+	{
+		print_usage();
+		return 0;
+	}
 	list<string> sFilenames;
 	//Parse commandline
 	for(int i = 1; i < argc; i++)
