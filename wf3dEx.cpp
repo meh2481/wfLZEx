@@ -327,9 +327,9 @@ void outputObj(string filename, vector<vector<vertHelper> > vertices, vector<vec
 		
 		for(int i = 0; i < faces[j].size(); i++)
 			ofile << "f " 
-				  << faces[j][i].v1+curAdd << "/" << faces[j][i].v1+curAdd << ' ' 
+				  << faces[j][i].v3+curAdd << "/" << faces[j][i].v3+curAdd << ' ' 
 				  << faces[j][i].v2+curAdd << "/" << faces[j][i].v2+curAdd << ' ' 
-				  << faces[j][i].v3+curAdd << "/" << faces[j][i].v3+curAdd << endl;
+				  << faces[j][i].v1+curAdd << "/" << faces[j][i].v1+curAdd << endl;
 		
 		ofile << endl;
 		
@@ -379,7 +379,6 @@ void decomp(string filename)
 		blobOffset blobHeader;
 		memcpy(&blobHeader, &fileData[offset.offset], sizeof(blobOffset));
 		
-		cout << "Found blob of type " << blobHeader.type << " at offset " << offset.offset << endl;
 		//Read blob data based on blob type
 		if(blobHeader.type == BLOB_TYPE_TEXTURE)
 		{
@@ -389,17 +388,25 @@ void decomp(string filename)
 			
 			//Extract texture
 			extractTexture(fileData, texData);
-		} else if(blobHeader.type == BLOB_TYPE_VERTICES) {
+		} 
+		else if(blobHeader.type == BLOB_TYPE_VERTICES) 
+		{
 			blobVertexData bvd;
 			memcpy(&bvd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobVertexData));
 			
 			//Seems to go in order faces-vertices-faces-vertices
 			vertices.push_back(extractVertices(fileData, bvd, filename));
-		} else if(blobHeader.type == BLOB_TYPE_FACES) {
+		} 
+		else if(blobHeader.type == BLOB_TYPE_FACES) 
+		{
 			blobFaceData bfd;
 			memcpy(&bfd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobFaceData));
 			
 			faces.push_back(extractFaces(fileData, bfd, filename));
+		} 
+		else 
+		{
+			cout << "Found blob of type " << blobHeader.type << " at offset " << offset.offset << endl;
 		}
 	}
 	
