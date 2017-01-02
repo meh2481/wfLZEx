@@ -25,25 +25,25 @@ using namespace std;
 //------------------------------
 typedef struct {
 	uint8_t sig[4];	//WFSN
-	uint32_t pad[4];	//Always 0
-	uint32_t numOffsets;	//Number of offsetList objects
-	uint32_t offsetListOffset;	//Offset to offsetList
+	uint32_t pad[3];	//Always 0
+	//Followed by root node
 } wf3dHeader;
 
 typedef struct {
-	uint64_t offset;	//Offset in file to blobOffset object
+	uint64_t offset;	//Offset in file to node object
 } offsetList;
 
-#define BLOB_TYPE_TEXTURE 	0x1
-#define BLOB_TYPE_VERTICES	0x2
-#define BLOB_TYPE_FACES		0x3
+#define NODE_TYPE_ROOT		0x0
+#define NODE_TYPE_TEXTURE 	0x1
+#define NODE_TYPE_VERTICES	0x2
+#define NODE_TYPE_FACES		0x3
 
 typedef struct {
-	uint32_t type;		//One of the blob types above
-	uint32_t unk1;		//
-	uint64_t pad;		//Always 0
-	//Followed by blob data
-} blobOffset;
+	uint32_t type;				//One of the node types above
+	uint32_t numChildren;		//Number of children in offsetList
+	uint64_t childListOffset;	//Offset to offsetList
+	//Followed by node data
+} Node;
 
 #define IMAGE_TYPE_DXT1	0x31
 #define IMAGE_TYPE_DXT5	0x64
@@ -51,11 +51,11 @@ typedef struct {
 typedef struct {
 	uint32_t width;
 	uint32_t height;
-	uint32_t pad1;
+	uint32_t unk1;
 	uint32_t type;	//One of the image types above
 	uint64_t hash;
 	uint32_t imageDataOffset;	//Point to imgDataHeader
-	uint32_t unkOffset;
+	uint32_t unk2;
 	uint32_t filenameOffset;	//Point to filenameHeader
 } blobTextureData;
 
@@ -339,6 +339,69 @@ void outputObj(string filename, vector<vector<vertHelper> > vertices, vector<vec
 	ofile.close();
 }
 
+void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> >* vertices, vector<vector<faceIndex> >* faces, string filename, int numTabs)
+{
+	Node node;
+	memcpy(&node, &fileData[nodeOffset], sizeof(Node));
+	
+	//Put number of tabs
+	for(int i = 0; i < numTabs; i++)
+		cout << '\t';
+	cout << "Found node of type " << node.type << " at offset " << std::hex << nodeOffset << std::dec << endl;
+	
+	//Read node data based on node type
+	switch(node.type)
+	{
+		case NODE_TYPE_ROOT:
+			break;	//Root node has no following data
+		
+		case NODE_TYPE_TEXTURE:
+		{
+			blobTextureData texData;
+			memcpy(&texData, &fileData[nodeOffset + sizeof(Node)], sizeof(blobTextureData));
+			
+			//Extract texture
+			extractTexture(fileData, texData);
+			break;
+		}
+		
+		case NODE_TYPE_VERTICES:
+		{
+			blobVertexData bvd;
+			memcpy(&bvd, &fileData[nodeOffset + sizeof(Node)], sizeof(blobVertexData));
+			
+			//Seems to go in order faces-vertices-faces-vertices
+			vertices->push_back(extractVertices(fileData, bvd, filename));
+			break;
+		}	
+		
+		case NODE_TYPE_FACES:
+		{
+			blobFaceData bfd;
+			memcpy(&bfd, &fileData[nodeOffset + sizeof(Node)], sizeof(blobFaceData));
+			
+			faces->push_back(extractFaces(fileData, bfd, filename));
+			break;
+		}
+		
+		default:
+			
+			break;
+		
+	}
+	
+	//Read the children of this node
+	for(uint32_t curOffset = 0; curOffset < node.numChildren; curOffset++)	//Base case: no children
+	{
+		//Read in this offset
+		offsetList offset;
+		memcpy(&offset, &fileData[node.childListOffset+curOffset*sizeof(offsetList)], sizeof(offsetList));
+		
+		//Recurse
+		readNode(fileData, offset.offset, vertices, faces, filename, numTabs+1);
+	}
+}
+
 void decomp(string filename) 
 {
 	FILE* fh = fopen(filename.c_str(), "rb");
@@ -368,47 +431,8 @@ void decomp(string filename)
 	vector<vector<vertHelper> > vertices;
 	vector<vector<faceIndex> > faces;
 	
-	//Read the offset list
-	for(uint32_t curOffset = 0; curOffset < header.numOffsets; curOffset++)
-	{
-		//Read in this offset
-		offsetList offset;
-		memcpy(&offset, &fileData[header.offsetListOffset+curOffset*sizeof(offsetList)], sizeof(offsetList));
-		
-		//Seek to this position and read blob header
-		blobOffset blobHeader;
-		memcpy(&blobHeader, &fileData[offset.offset], sizeof(blobOffset));
-		
-		//Read blob data based on blob type
-		if(blobHeader.type == BLOB_TYPE_TEXTURE)
-		{
-			//Read in texture data header
-			blobTextureData texData;
-			memcpy(&texData, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobTextureData));
-			
-			//Extract texture
-			extractTexture(fileData, texData);
-		} 
-		else if(blobHeader.type == BLOB_TYPE_VERTICES) 
-		{
-			blobVertexData bvd;
-			memcpy(&bvd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobVertexData));
-			
-			//Seems to go in order faces-vertices-faces-vertices
-			vertices.push_back(extractVertices(fileData, bvd, filename));
-		} 
-		else if(blobHeader.type == BLOB_TYPE_FACES) 
-		{
-			blobFaceData bfd;
-			memcpy(&bfd, &fileData[offset.offset + sizeof(blobOffset)], sizeof(blobFaceData));
-			
-			faces.push_back(extractFaces(fileData, bfd, filename));
-		} 
-		else 
-		{
-			cout << "Found blob of type " << blobHeader.type << " at offset " << offset.offset << endl;
-		}
-	}
+	//Read the root node
+	readNode(fileData, sizeof(wf3dHeader), &vertices, &faces, filename, 0);
 	
 	outputObj(filename + ".obj", vertices, faces);
 	
@@ -429,16 +453,9 @@ int main(int argc, char** argv)
 		print_usage();
 		return 0;
 	}
-	list<string> sFilenames;
 	//Parse commandline
 	for(int i = 1; i < argc; i++)
-	{
-		string s = argv[i];
-		sFilenames.push_back(s);
-	}
-	//Decompress files
-	for(list<string>::iterator i = sFilenames.begin(); i != sFilenames.end(); i++)
-		decomp(*i);
+		decomp(argv[i]);
 	
 	return 0;
 }
