@@ -332,62 +332,76 @@ vector<faceIndex> extractFaces(uint8_t* fileData, FaceNode bfd)
 	return faces;
 }
 
-void outputObj(string filename, vector<vector<vertHelper> >& vertices, vector<vector<faceIndex> >& faces)
-{
-	if(!vertices.size() || !faces.size())
-		return; //Nothing to do
-	
-	if(vertices.size() != faces.size())
-	{
-		cout << "ERROR: vertices/faces mismatch in size. v: " << vertices.size() << ", f: " << faces.size() << endl;
-		return;
-	}
-	
-	//Convert .wf3d extension to .obj
-	filename = stripExtension(filename);
-	string name = stripPath(filename);	//Get base name while we're at it
-	filename += ".obj";
-	
-	cout << "Saving obj " << filename << endl;
-	
-	ofstream ofile;
-	ofile.open(filename.c_str());
-	
-	ofile << "# Created with wf3dEx v" << MAJOR << '.' << MINOR << endl;
-	
-	int curAdd = 1;
-	
-	for(int j = 0; j < faces.size(); j++)
-	{
-		ofile << "o " << name << '_' << j+1 << endl;
-	
-		for(int i = 0; i < vertices[j].size(); i++)
-			ofile << "v " << vertices[j][i].x << " " << vertices[j][i].y << " " << vertices[j][i].z << endl;
-		
-		//TODO Other things than uv; there's bones and other such stuff here also
-		for(int i = 0; i < vertices[j].size(); i++)
-			ofile << "vt " << vertices[j][i].u << " " << vertices[j][i].v << endl;
-		
-		//Wind faces in order 3-2-1 so Blender outputs correct vertex normals
-		for(int i = 0; i < faces[j].size(); i++)
-			ofile << "f " 
-				  << faces[j][i].v3+curAdd << "/" << faces[j][i].v3+curAdd << ' '	//UV and vertex indices are the same
-				  << faces[j][i].v2+curAdd << "/" << faces[j][i].v2+curAdd << ' ' 
-				  << faces[j][i].v1+curAdd << "/" << faces[j][i].v1+curAdd << endl;
-		
-		ofile << endl;
-		
-		curAdd += vertices[j].size();
-	}
-	
-	ofile.close();
-}
-
 //Global vars for use while decompressing
 map<uint64_t, string> textureFilenames;
 map<uint64_t, uint64_t> objTextureMap;
+map<uint64_t, vector<faceIndex> > faces;
+map<uint64_t, vector<vertHelper> > vertices;
+vector<ObjMapNode> objects;
 
-void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> >* vertices, vector<vector<faceIndex> >* faces, int numTabs)
+void outputObj(string filename)
+{
+	//Convert .wf3d extension to .obj
+	filename = stripExtension(filename);
+	string name = stripPath(filename);	//Get base name while we're at it
+	string objFilename = filename + ".obj";
+	string mtlFilename = filename + ".mtl";
+	
+	cout << "Saving obj " << objFilename << endl;
+	cout << "Saving mtl " << mtlFilename << endl;
+	
+	ofstream ofile;
+	ofile.open(objFilename.c_str());
+	
+	ofstream mfile;
+	mfile.open(mtlFilename.c_str());
+	
+	ofile << "# Created with wf3dEx v" << MAJOR << '.' << MINOR << endl;
+	mfile << "# Created with wf3dEx v" << MAJOR << '.' << MINOR << endl;
+	
+	int curAdd = 1;
+	for(int i = 0; i < objects.size(); i++)
+	{
+		ObjMapNode omn = objects[i];
+		
+		//Create mtl for each texture and stuff
+		mfile << "newmtl " << i << endl
+			  << "map_Kd " << textureFilenames[objTextureMap[omn.objHash]] << endl;
+		
+		ofile << "mtllib " << mtlFilename << endl;
+		
+		//wavefront supports multiple objects; use them per obj we get
+		ofile << "o " << name << '_' << i+1 << endl;
+		
+		//Vertices
+		vector<vertHelper> vertList = vertices[omn.vertHash];
+		for(int j = 0; j < vertList.size(); j++)
+			ofile << "v " << vertList[j].x << " " << vertList[j].y << " " << vertList[j].z << endl;
+		
+		//Vertex UV coordinates
+		for(int j = 0; j < vertList.size(); j++)
+			ofile << "vt " << vertList[j].u << " " << vertList[j].v << endl;
+		
+		//Faces
+		ofile << "usemtl " << i << endl;
+		vector<faceIndex> faceList = faces[omn.faceHash];
+		//Wind faces in order 3-2-1 so Blender outputs correct vertex normals
+		for(int j = 0; j < faceList.size(); j++)
+			ofile << "f " 
+				  << faceList[j].v3+curAdd << "/" << faceList[j].v3+curAdd << ' '	//UV and vertex indices are the same
+				  << faceList[j].v2+curAdd << "/" << faceList[j].v2+curAdd << ' ' 
+				  << faceList[j].v1+curAdd << "/" << faceList[j].v1+curAdd << endl;
+		
+		ofile << endl;
+		
+		curAdd += vertList.size();
+	}
+	
+	ofile.close();
+	mfile.close();
+}
+
+void readNode(uint8_t* fileData, uint64_t nodeOffset, int numTabs)
 {
 	Node node;
 	memcpy(&node, &fileData[nodeOffset], sizeof(Node));
@@ -419,8 +433,7 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> 
 			VertexNode bvd;
 			memcpy(&bvd, &fileData[nodeOffset + sizeof(Node)], sizeof(VertexNode));
 			
-			//Seems to go in order faces-vertices-faces-vertices
-			vertices->push_back(extractVertices(fileData, bvd));
+			vertices[bvd.hash] = extractVertices(fileData, bvd);
 			break;
 		}	
 		
@@ -429,7 +442,7 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> 
 			FaceNode bfd;
 			memcpy(&bfd, &fileData[nodeOffset + sizeof(Node)], sizeof(FaceNode));
 			
-			faces->push_back(extractFaces(fileData, bfd));
+			faces[bfd.hash] = extractFaces(fileData, bfd);
 			break;
 		}
 		
@@ -439,6 +452,16 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> 
 			memcpy(&otn, &fileData[nodeOffset + sizeof(Node)], sizeof(ObjTextureNode));
 			
 			objTextureMap[otn.objHash] = otn.texHash;
+			break;
+		}
+		
+		case NODE_TYPE_OBJ_MAP:
+		{
+			ObjMapNode omn;
+			memcpy(&omn, &fileData[nodeOffset + sizeof(Node)], sizeof(ObjMapNode));
+			
+			objects.push_back(omn);
+			break;
 		}
 		
 		default:
@@ -454,7 +477,7 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> 
 		memcpy(&offset, &fileData[node.childListOffset+i*sizeof(offsetList)], sizeof(offsetList));
 		
 		//Recurse
-		readNode(fileData, offset.offset, vertices, faces, numTabs+1);
+		readNode(fileData, offset.offset, numTabs+1);
 	}
 }
 
@@ -463,6 +486,9 @@ void decomp(string filename)
 	//Clear any leftover data from old files
 	textureFilenames.clear();
 	objTextureMap.clear();
+	faces.clear();
+	vertices.clear();
+	objects.clear();
 	
 	FILE* fh = fopen(filename.c_str(), "rb");
 	if(fh == NULL)
@@ -487,14 +513,10 @@ void decomp(string filename)
 		return;
 	}
 	
-	//Assume only one per for now...
-	vector<vector<vertHelper> > vertices;
-	vector<vector<faceIndex> > faces;
-	
 	//Read the root node
-	readNode(fileData, sizeof(wf3dHeader), &vertices, &faces, 0);
+	readNode(fileData, sizeof(wf3dHeader), 0);
 	
-	outputObj(filename, vertices, faces);
+	outputObj(filename);
 	
 	//Cleanup
 	free(fileData);
