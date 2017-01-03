@@ -15,6 +15,7 @@
 #include <cstring>
 #include <iomanip>
 #include <fstream>
+#include <map>
 using namespace std;
 
 #define MAJOR 0
@@ -37,12 +38,15 @@ typedef struct {
 #define NODE_TYPE_TEXTURE 	0x1
 #define NODE_TYPE_VERTICES	0x2
 #define NODE_TYPE_FACES		0x3
+#define NODE_TYPE_OBJ_TEXTURE_MAP 0x4
+#define NODE_TYPE_OBJ		0x5
+#define NODE_TYPE_OBJ_MAP	0x6
 
 typedef struct {
 	uint32_t type;				//One of the node types above
 	uint32_t numChildren;		//Number of children in offsetList
 	uint64_t childListOffset;	//Offset to offsetList
-	//Followed by node data
+	//Followed by one of the Node data types below
 } Node;
 
 #define IMAGE_TYPE_DXT1	0x31
@@ -57,7 +61,7 @@ typedef struct {
 	uint32_t imageDataOffset;	//Point to imgDataHeader
 	uint32_t unk2;
 	uint32_t filenameOffset;	//Point to filenameHeader
-} blobTextureData;
+} TextureNode;
 
 typedef struct {
 	uint32_t numIndices;	//divide by 3 for number of faces
@@ -65,7 +69,21 @@ typedef struct {
 	uint64_t hash;
 	uint32_t offset;	//To faceDataHeader
 	uint32_t size;
-} blobFaceData;
+} FaceNode;
+
+typedef struct {
+	uint64_t objHash;
+	uint64_t texHash;
+	uint64_t unk[3];
+} ObjTextureNode;
+
+typedef struct {
+	uint64_t unkHash1;
+	uint64_t objHash;	//Matches ObjTextureNode objHash
+	uint64_t vertHash;	//Matches VertexNode hash
+	uint64_t faceHash;	//Matches FaceNode hash
+	uint64_t unkHash2[3];
+} ObjMapNode;
 
 #define VERT_DATA_WEIGHT_UV 	0
 #define VERT_DATA_WEIGHT_TAN_UV	1
@@ -76,7 +94,7 @@ typedef struct {
 	uint64_t hash;
 	uint32_t offset;	//To vertDataHeader
 	uint32_t size;		//Of vertex data
-} blobVertexData;
+} VertexNode;
 
 typedef struct {
 	uint32_t unk;	//Always FFFFFF00
@@ -164,6 +182,30 @@ float halfFloat(uint16_t in)
 	return *(float*)&tmp;
 }
 
+string stripExtension(string filename)
+{
+	//Erase extension from end
+	size_t pos = filename.rfind('.');
+	if(pos != string::npos)
+		filename.erase(pos);
+	
+
+	
+	return filename;
+}
+
+string stripPath(string filename)
+{
+	//Next, strip off any file path before it
+	size_t pos = filename.rfind('/');	//Forward slash (UNIX-style)
+	if(pos == string::npos)
+		pos = filename.rfind('\\');	//Backslash (Windows-style)
+	if(pos != string::npos)
+		filename.erase(0, pos+1);
+	
+	return filename;
+}
+
 FIBITMAP* imageFromPixels(uint8_t* imgData, uint32_t width, uint32_t height)
 {
 	//FreeImage is broken here and you can't swap R/G/B channels upon creation. Do that manually
@@ -177,7 +219,7 @@ FIBITMAP* imageFromPixels(uint8_t* imgData, uint32_t width, uint32_t height)
 	return result;
 }
 
-void extractTexture(uint8_t* fileData, blobTextureData texData)
+string extractTexture(uint8_t* fileData, TextureNode texData)
 {
 	//Grab the filename
 	filenameHeader fnh;
@@ -214,7 +256,7 @@ void extractTexture(uint8_t* fileData, blobTextureData texData)
 	squish::DecompressImage(imgData, texData.width, texData.height, dst, flags);
 	
 	//Save image as PNG
-	string outputFilename = filename + ".png";
+	string outputFilename = stripExtension(filename) + ".png";	//Convert .tga or .psd to .png
 	cout << "Saving image " << outputFilename << endl;
 	FIBITMAP* result = imageFromPixels(imgData, texData.width, texData.height);
 	FreeImage_FlipVertical(result);	//These seem to always be upside-down
@@ -223,9 +265,11 @@ void extractTexture(uint8_t* fileData, blobTextureData texData)
 	
 	free(dst);
 	free(imgData);
+	
+	return outputFilename;
 }
 
-vector<vertHelper> extractVertices(uint8_t* fileData, blobVertexData bvd, string filename)
+vector<vertHelper> extractVertices(uint8_t* fileData, VertexNode bvd)
 {
 	vertDataHeader vdh;
 	memcpy(&vdh, &fileData[bvd.offset], sizeof(vertDataHeader));
@@ -272,14 +316,10 @@ vector<vertHelper> extractVertices(uint8_t* fileData, blobVertexData bvd, string
 	return vertices;
 }
 
-vector<faceIndex> extractFaces(uint8_t* fileData, blobFaceData bfd, string filename)
+vector<faceIndex> extractFaces(uint8_t* fileData, FaceNode bfd)
 {	
 	faceDataHeader fdh;
 	memcpy(&fdh, &fileData[bfd.offset], sizeof(faceDataHeader));
-	
-	//string outFilename = filename + ".faces.txt";
-	//ofstream ofile;
-	//ofile.open(outFilename.c_str());
 	vector<faceIndex> faces;
 	
 	for(uint32_t i = 0; i < bfd.numIndices / 3; i++)
@@ -288,22 +328,25 @@ vector<faceIndex> extractFaces(uint8_t* fileData, blobFaceData bfd, string filen
 		memcpy(&fi, &fileData[bfd.offset+sizeof(faceDataHeader)+i*sizeof(faceIndex)], sizeof(faceIndex));
 		
 		faces.push_back(fi);
-		//ofile << "f " << fi.v1+1 << " " << fi.v2+1 << " " << fi.v3+1 << endl;
 	}
-	//ofile.close();
 	return faces;
 }
 
-void outputObj(string filename, vector<vector<vertHelper> > vertices, vector<vector<faceIndex> > faces)
+void outputObj(string filename, vector<vector<vertHelper> >& vertices, vector<vector<faceIndex> >& faces)
 {
 	if(!vertices.size() || !faces.size())
 		return; //Nothing to do
 	
 	if(vertices.size() != faces.size())
 	{
-		cout << "ERR: vertices/faces mismatch in size" << endl;
+		cout << "ERROR: vertices/faces mismatch in size. v: " << vertices.size() << ", f: " << faces.size() << endl;
 		return;
 	}
+	
+	//Convert .wf3d extension to .obj
+	filename = stripExtension(filename);
+	string name = stripPath(filename);	//Get base name while we're at it
+	filename += ".obj";
 	
 	cout << "Saving obj " << filename << endl;
 	
@@ -316,7 +359,7 @@ void outputObj(string filename, vector<vector<vertHelper> > vertices, vector<vec
 	
 	for(int j = 0; j < faces.size(); j++)
 	{
-		ofile << "o " << filename << '_' << j+1 << endl;
+		ofile << "o " << name << '_' << j+1 << endl;
 	
 		for(int i = 0; i < vertices[j].size(); i++)
 			ofile << "v " << vertices[j][i].x << " " << vertices[j][i].y << " " << vertices[j][i].z << endl;
@@ -325,9 +368,10 @@ void outputObj(string filename, vector<vector<vertHelper> > vertices, vector<vec
 		for(int i = 0; i < vertices[j].size(); i++)
 			ofile << "vt " << vertices[j][i].u << " " << vertices[j][i].v << endl;
 		
+		//Wind faces in order 3-2-1 so Blender outputs correct vertex normals
 		for(int i = 0; i < faces[j].size(); i++)
 			ofile << "f " 
-				  << faces[j][i].v3+curAdd << "/" << faces[j][i].v3+curAdd << ' ' 
+				  << faces[j][i].v3+curAdd << "/" << faces[j][i].v3+curAdd << ' '	//UV and vertex indices are the same
 				  << faces[j][i].v2+curAdd << "/" << faces[j][i].v2+curAdd << ' ' 
 				  << faces[j][i].v1+curAdd << "/" << faces[j][i].v1+curAdd << endl;
 		
@@ -339,7 +383,11 @@ void outputObj(string filename, vector<vector<vertHelper> > vertices, vector<vec
 	ofile.close();
 }
 
-void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> >* vertices, vector<vector<faceIndex> >* faces, string filename, int numTabs)
+//Global vars for use while decompressing
+map<uint64_t, string> textureFilenames;
+map<uint64_t, uint64_t> objTextureMap;
+
+void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> >* vertices, vector<vector<faceIndex> >* faces, int numTabs)
 {
 	Node node;
 	memcpy(&node, &fileData[nodeOffset], sizeof(Node));
@@ -347,63 +395,75 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, vector<vector<vertHelper> 
 	//Put number of tabs
 	for(int i = 0; i < numTabs; i++)
 		cout << '\t';
-	cout << "Found node of type " << node.type << " at offset " << std::hex << nodeOffset << std::dec << endl;
+	cout << "Node of type " << node.type << " at offset " << std::hex << nodeOffset << std::dec << endl;
 	
 	//Read node data based on node type
 	switch(node.type)
 	{
 		case NODE_TYPE_ROOT:
-			break;	//Root node has no following data
+			break;	//Root node has no data
 		
 		case NODE_TYPE_TEXTURE:
 		{
-			blobTextureData texData;
-			memcpy(&texData, &fileData[nodeOffset + sizeof(Node)], sizeof(blobTextureData));
+			TextureNode texNode;
+			memcpy(&texNode, &fileData[nodeOffset + sizeof(Node)], sizeof(TextureNode));
 			
 			//Extract texture
-			extractTexture(fileData, texData);
+			string textureFilename = extractTexture(fileData, texNode);
+			textureFilenames[texNode.hash] = textureFilename;
 			break;
 		}
 		
 		case NODE_TYPE_VERTICES:
 		{
-			blobVertexData bvd;
-			memcpy(&bvd, &fileData[nodeOffset + sizeof(Node)], sizeof(blobVertexData));
+			VertexNode bvd;
+			memcpy(&bvd, &fileData[nodeOffset + sizeof(Node)], sizeof(VertexNode));
 			
 			//Seems to go in order faces-vertices-faces-vertices
-			vertices->push_back(extractVertices(fileData, bvd, filename));
+			vertices->push_back(extractVertices(fileData, bvd));
 			break;
 		}	
 		
 		case NODE_TYPE_FACES:
 		{
-			blobFaceData bfd;
-			memcpy(&bfd, &fileData[nodeOffset + sizeof(Node)], sizeof(blobFaceData));
+			FaceNode bfd;
+			memcpy(&bfd, &fileData[nodeOffset + sizeof(Node)], sizeof(FaceNode));
 			
-			faces->push_back(extractFaces(fileData, bfd, filename));
+			faces->push_back(extractFaces(fileData, bfd));
 			break;
 		}
 		
-		default:
+		case NODE_TYPE_OBJ_TEXTURE_MAP:
+		{
+			ObjTextureNode otn;
+			memcpy(&otn, &fileData[nodeOffset + sizeof(Node)], sizeof(ObjTextureNode));
 			
+			objTextureMap[otn.objHash] = otn.texHash;
+		}
+		
+		default:
 			break;
 		
 	}
 	
 	//Read the children of this node
-	for(uint32_t curOffset = 0; curOffset < node.numChildren; curOffset++)	//Base case: no children
+	for(uint32_t i = 0; i < node.numChildren; i++)	//Base case: no children
 	{
 		//Read in this offset
 		offsetList offset;
-		memcpy(&offset, &fileData[node.childListOffset+curOffset*sizeof(offsetList)], sizeof(offsetList));
+		memcpy(&offset, &fileData[node.childListOffset+i*sizeof(offsetList)], sizeof(offsetList));
 		
 		//Recurse
-		readNode(fileData, offset.offset, vertices, faces, filename, numTabs+1);
+		readNode(fileData, offset.offset, vertices, faces, numTabs+1);
 	}
 }
 
 void decomp(string filename) 
 {
+	//Clear any leftover data from old files
+	textureFilenames.clear();
+	objTextureMap.clear();
+	
 	FILE* fh = fopen(filename.c_str(), "rb");
 	if(fh == NULL)
 	{
@@ -423,7 +483,7 @@ void decomp(string filename)
 	memcpy(&header, fileData, sizeof(wf3dHeader));
 	if(header.sig[0] != 'W' || header.sig[1] != 'F' || header.sig[2] != 'S' || header.sig[3] != 'N')
 	{
-		cout << "Error: Not a WF3D file " << filename << endl;
+		cout << "ERROR: Not a WF3D file: " << filename << endl;
 		return;
 	}
 	
@@ -432,9 +492,9 @@ void decomp(string filename)
 	vector<vector<faceIndex> > faces;
 	
 	//Read the root node
-	readNode(fileData, sizeof(wf3dHeader), &vertices, &faces, filename, 0);
+	readNode(fileData, sizeof(wf3dHeader), &vertices, &faces, 0);
 	
-	outputObj(filename + ".obj", vertices, faces);
+	outputObj(filename, vertices, faces);
 	
 	//Cleanup
 	free(fileData);
