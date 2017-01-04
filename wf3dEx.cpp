@@ -41,6 +41,8 @@ typedef struct {
 #define NODE_TYPE_OBJ_TEXTURE_MAP 0x4
 #define NODE_TYPE_OBJ		0x5
 #define NODE_TYPE_OBJ_MAP	0x6
+#define NODE_TYPE_COLLISION	0xA
+#define NODE_TYPE_OBJDATA	0xB
 
 typedef struct {
 	uint32_t type;				//One of the node types above
@@ -60,7 +62,7 @@ typedef struct {
 	uint64_t hash;
 	uint32_t imageDataOffset;	//Point to imgDataHeader
 	uint32_t unk2;
-	uint32_t filenameOffset;	//Point to filenameHeader
+	uint32_t filenameOffset;	//Point to stringHeader
 } TextureNode;
 
 typedef struct {
@@ -84,6 +86,23 @@ typedef struct {
 	uint64_t faceHash;	//Matches FaceNode hash
 	uint64_t unkHash2[3];
 } ObjMapNode;
+
+typedef struct {
+	uint32_t unk[2];
+	uint32_t nameOffset;	//Offset to stringHeader
+	uint32_t nameLen;		//Total size of string entry
+} CollisionNode;
+
+typedef struct {
+	uint32_t unk1;
+	uint32_t flags;
+	uint32_t dataOffset1;
+	uint32_t dataLen1;
+	uint32_t dataOffset2;
+	uint32_t dataLen2;
+	uint32_t dataNameOffset;
+	uint32_t dataNameLen;
+} ObjDataNode;
 
 #define VERT_DATA_WEIGHT_UV 	0
 #define VERT_DATA_WEIGHT_TAN_UV	1
@@ -116,9 +135,9 @@ typedef struct {
 
 typedef struct {
 	uint32_t unk;	//Always FFFFFF00
-	uint32_t filenameLen;
-	//Followed by filenameLen characters
-} filenameHeader;
+	uint32_t len;
+	//Followed by len characters
+} stringHeader;
 
 typedef struct {
 	uint32_t unk;	//Always FFFFFF00
@@ -222,10 +241,10 @@ FIBITMAP* imageFromPixels(uint8_t* imgData, uint32_t width, uint32_t height)
 string extractTexture(uint8_t* fileData, TextureNode texData)
 {
 	//Grab the filename
-	filenameHeader fnh;
-	memcpy(&fnh, &fileData[texData.filenameOffset], sizeof(filenameHeader));
+	stringHeader sh;
+	memcpy(&sh, &fileData[texData.filenameOffset], sizeof(stringHeader));
 	
-	string filename = (const char*) &fileData[texData.filenameOffset + sizeof(filenameHeader)];
+	string filename = (const char*) &fileData[texData.filenameOffset + sizeof(stringHeader)];
 	
 	//Grab image data header
 	imgDataHeader idh;
@@ -461,6 +480,26 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, int numTabs)
 			memcpy(&omn, &fileData[nodeOffset + sizeof(Node)], sizeof(ObjMapNode));
 			
 			objects.push_back(omn);
+			break;
+		}
+		
+		case NODE_TYPE_COLLISION:
+		{
+			CollisionNode cn;
+			memcpy(&cn, &fileData[nodeOffset + sizeof(Node)], sizeof(CollisionNode));
+			
+			uint8_t* str = &fileData[cn.nameOffset + sizeof(stringHeader)];
+			cout << "Collision node name: " << str << endl;
+			break;
+		}
+		
+		case NODE_TYPE_OBJDATA:
+		{
+			ObjDataNode odn;
+			memcpy(&odn, &fileData[nodeOffset + sizeof(Node)], sizeof(ObjDataNode));
+			
+			uint8_t* str = &fileData[odn.dataNameOffset + sizeof(stringHeader)];
+			cout << "Obj data name: " << str << endl;
 			break;
 		}
 		
