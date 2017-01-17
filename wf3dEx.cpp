@@ -39,8 +39,9 @@ typedef struct {
 #define NODE_TYPE_VERTICES	0x2
 #define NODE_TYPE_FACES		0x3
 #define NODE_TYPE_OBJ_TEXTURE_MAP 0x4
-#define NODE_TYPE_OBJ		0x5
+#define NODE_TYPE_GROUP		0x5
 #define NODE_TYPE_OBJ_MAP	0x6
+#define NODE_TYPE_BONES		0x9
 #define NODE_TYPE_COLLISION	0xA
 #define NODE_TYPE_OBJDATA	0xB
 
@@ -104,6 +105,13 @@ typedef struct {
 	uint32_t dataNameLen;
 } ObjDataNode;
 
+typedef struct {
+	uint32_t unk1;
+	uint32_t numBones;
+	uint32_t offset;	//To DataHeader followed by numBones BoneMatrix entries
+	uint32_t size;
+} BoneNode;
+
 #define VERT_DATA_WEIGHT_UV 	0
 #define VERT_DATA_WEIGHT_TAN_UV	1
 
@@ -146,6 +154,12 @@ typedef struct {
 } vertDataHeader;
 
 typedef struct {
+	uint32_t unk;	//Always FFFFFF00
+	uint32_t size;	//bytes
+	//Followed by data
+} DataHeader;
+
+typedef struct {
 	float x;
 	float y;
 	float z;
@@ -165,6 +179,10 @@ typedef struct {
 	uint16_t u;
 	uint16_t v;
 } vertEntryWeightTanUV;
+
+typedef struct {
+	float val[16];	//4x4 matrix probably
+} BoneMatrix;
 
 //------------------------------
 // Helper classes
@@ -351,12 +369,42 @@ vector<faceIndex> extractFaces(uint8_t* fileData, FaceNode bfd)
 	return faces;
 }
 
+vector<BoneMatrix> extractBones(uint8_t* fileData, BoneNode bn)
+{
+	vector<BoneMatrix> ret;
+	//FILE* fp = fopen("out.bones", "wb");
+	//fwrite((void*)&bn.numBones, 1, sizeof(uint32_t), fp);
+	for(uint32_t i = 0; i < bn.numBones; i++) 
+	{
+		BoneMatrix bm;
+		memcpy(&bm, &fileData[bn.offset+i*sizeof(BoneMatrix)+sizeof(DataHeader)], sizeof(BoneMatrix));
+		
+		ret.push_back(bm);
+		//TODO Store matrix
+		/*cerr << "matrix = mathutils.Matrix([[" << bm.val[0] << ", " << bm.val[1] << ", " << bm.val[2] << ", " << bm.val[3] << "]," 
+			 << "[" << bm.val[4] << ", " << bm.val[5] << ", " << bm.val[6] << ", " << bm.val[7] << "],"  
+			 << "[" << bm.val[8] << ", " << bm.val[9] << ", " << bm.val[10] << ", " << bm.val[11] << "],"  
+			 << "[" << bm.val[12] << ", " << bm.val[13] << ", " << bm.val[14] << ", " << bm.val[15] << "]]).inverted()" << endl;
+		
+		cerr << "bone = armature.edit_bones.new('bone" << i << "')" << endl
+			 << "bone.tail = mathutils.Vector([1,0,0])" << endl
+			 << "bone.transform(matrix)" << endl;*/
+			 
+		//for(int j = 0; j < 16; j++)
+			//fwrite(&fileData[bn.offset+i*sizeof(BoneMatrix)+sizeof(DataHeader)], 1, sizeof(BoneMatrix), fp);
+		
+	}
+	//fclose(fp);
+	return ret;
+}
+
 //Global vars for use while decompressing
 map<uint64_t, string> textureFilenames;
 map<uint64_t, uint64_t> objTextureMap;
 map<uint64_t, vector<faceIndex> > faces;
 map<uint64_t, vector<vertHelper> > vertices;
 vector<ObjMapNode> objects;
+vector<vector<BoneMatrix> > bones;
 
 void outputObj(string filename)
 {
@@ -418,6 +466,22 @@ void outputObj(string filename)
 	
 	ofile.close();
 	mfile.close();
+	
+	//Spit out bones
+	for(int i = 0; i < bones.size(); i++)
+	{
+		ostringstream oss;
+		oss << filename << i+1 << ".bones";
+		cout << "Saving bones " << oss.str() << endl;
+		FILE* fp = fopen(oss.str().c_str(), "wb");
+		uint32_t sz = bones[i].size();
+		fwrite(&sz, 1, sizeof(uint32_t), fp);
+		
+		for(int j = 0; j < bones[i].size(); j++)
+			fwrite(&bones[i][j], 1, sizeof(BoneMatrix), fp);
+		
+		fclose(fp);
+	}
 }
 
 void readNode(uint8_t* fileData, uint64_t nodeOffset, int numTabs)
@@ -501,6 +565,14 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, int numTabs)
 			uint8_t* str = &fileData[odn.dataNameOffset + sizeof(stringHeader)];
 			cout << "Obj data name: " << str << endl;
 			break;
+		}
+		
+		case NODE_TYPE_BONES:
+		{
+			BoneNode bn;
+			memcpy(&bn, &fileData[nodeOffset + sizeof(Node)], sizeof(BoneNode));
+			
+			bones.push_back(extractBones(fileData, bn));
 		}
 		
 		default:

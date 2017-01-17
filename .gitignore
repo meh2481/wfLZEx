@@ -29,3 +29,5 @@ wfLZEx
 *.wf3d
 *.obj
 *.mtl
+*.bones
+out.txt
