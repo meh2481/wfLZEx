@@ -30,4 +30,5 @@ wfLZEx
 *.obj
 *.mtl
 *.bones
+*.bonenames
 out.txt

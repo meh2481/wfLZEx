@@ -41,6 +41,7 @@ typedef struct {
 #define NODE_TYPE_OBJ_TEXTURE_MAP 0x4
 #define NODE_TYPE_GROUP		0x5
 #define NODE_TYPE_OBJ_MAP	0x6
+#define NODE_TYPE_BONE_NAME	0x8
 #define NODE_TYPE_BONES		0x9
 #define NODE_TYPE_COLLISION	0xA
 #define NODE_TYPE_OBJDATA	0xB
@@ -52,6 +53,11 @@ typedef struct {
 	//Followed by one of the Node data types below
 } Node;
 
+typedef struct {
+	uint32_t offset;
+	uint32_t size;
+} Offset32;		//Used in a lot of headers
+
 #define IMAGE_TYPE_DXT1	0x31
 #define IMAGE_TYPE_DXT5	0x64
 
@@ -61,17 +67,16 @@ typedef struct {
 	uint32_t unk1;
 	uint32_t type;	//One of the image types above
 	uint64_t hash;
-	uint32_t imageDataOffset;	//Point to imgDataHeader
+	uint32_t imageDataOffset;	//Point to DataHeader
 	uint32_t unk2;
-	uint32_t filenameOffset;	//Point to stringHeader
+	uint32_t filenameOffset;	//Point to DataHeader
 } TextureNode;
 
 typedef struct {
 	uint32_t numIndices;	//divide by 3 for number of faces
 	uint32_t type;	//Always 2?
 	uint64_t hash;
-	uint32_t offset;	//To faceDataHeader
-	uint32_t size;
+	Offset32 offset;	//To DataHeader
 } FaceNode;
 
 typedef struct {
@@ -90,26 +95,21 @@ typedef struct {
 
 typedef struct {
 	uint32_t unk[2];
-	uint32_t nameOffset;	//Offset to stringHeader
-	uint32_t nameLen;		//Total size of string entry
+	Offset32 offset;	//Offset to DataHeader
 } CollisionNode;
 
 typedef struct {
 	uint32_t unk1;
 	uint32_t flags;
-	uint32_t dataOffset1;
-	uint32_t dataLen1;
-	uint32_t dataOffset2;
-	uint32_t dataLen2;
-	uint32_t dataNameOffset;
-	uint32_t dataNameLen;
+	Offset32 dataOffset1;
+	Offset32 dataOffset2;
+	Offset32 dataNameOffset;
 } ObjDataNode;
 
 typedef struct {
 	uint32_t unk1;
 	uint32_t numBones;
-	uint32_t offset;	//To DataHeader followed by numBones BoneMatrix entries
-	uint32_t size;
+	Offset32 offset;	//To DataHeader followed by numBones BoneMatrix entries
 } BoneNode;
 
 #define VERT_DATA_WEIGHT_UV 	0
@@ -119,45 +119,29 @@ typedef struct {
 	uint32_t count;	//of something
 	uint32_t flags;	//one of above VERT_DATA flags
 	uint64_t hash;
-	uint32_t offset;	//To vertDataHeader
-	uint32_t size;		//Of vertex data
+	Offset32 offset;	//To DataHeader
 } VertexNode;
 
 typedef struct {
-	uint32_t unk;	//Always FFFFFF00
-	uint32_t compressedSize;
-	//Followed by compressedSize WFLZ-compressed image
-} imgDataHeader;
+	uint32_t unk1;	//Random or something
+	uint32_t unk2;	//Always FFFFFFFF?
+	uint32_t idx[4];	//Unknown
+	Offset32 unkOffset;
+	Offset32 boneNameOffset;
+} BoneNameNode;
 
+//Generic header used for storing data
 typedef struct {
-	uint32_t unk;	//Always FFFFFF00
-	uint32_t size;
-	//Followed by faceIndexes
-} faceDataHeader;
+	uint32_t unk;	//Always FFFFFF00?
+	uint32_t size;	//bytes
+	//Followed by data
+} DataHeader;
 
 typedef struct {
 	uint32_t v1;
 	uint32_t v2;
 	uint32_t v3;
 } faceIndex;
-
-typedef struct {
-	uint32_t unk;	//Always FFFFFF00
-	uint32_t len;
-	//Followed by len characters
-} stringHeader;
-
-typedef struct {
-	uint32_t unk;	//Always FFFFFF00
-	uint32_t size;
-	//Followed by vertEntrys
-} vertDataHeader;
-
-typedef struct {
-	uint32_t unk;	//Always FFFFFF00
-	uint32_t size;	//bytes
-	//Followed by data
-} DataHeader;
 
 typedef struct {
 	float x;
@@ -259,16 +243,16 @@ FIBITMAP* imageFromPixels(uint8_t* imgData, uint32_t width, uint32_t height)
 string extractTexture(uint8_t* fileData, TextureNode texData)
 {
 	//Grab the filename
-	stringHeader sh;
-	memcpy(&sh, &fileData[texData.filenameOffset], sizeof(stringHeader));
+	DataHeader sh;
+	memcpy(&sh, &fileData[texData.filenameOffset], sizeof(DataHeader));
 	
-	string filename = (const char*) &fileData[texData.filenameOffset + sizeof(stringHeader)];
+	string filename = (const char*) &fileData[texData.filenameOffset + sizeof(DataHeader)];
 	
 	//Grab image data header
-	imgDataHeader idh;
-	memcpy(&idh, &fileData[texData.imageDataOffset], sizeof(imgDataHeader));
+	DataHeader idh;
+	memcpy(&idh, &fileData[texData.imageDataOffset], sizeof(DataHeader));
 	
-	uint32_t dataOffset = texData.imageDataOffset + sizeof(imgDataHeader);
+	uint32_t dataOffset = texData.imageDataOffset + sizeof(DataHeader);
 	uint32_t* chunk = NULL;
 	const uint32_t decompressedSize = wfLZ_GetDecompressedSize(&(fileData[dataOffset]));
 	uint8_t* dst = (uint8_t*)malloc(decompressedSize);
@@ -308,8 +292,8 @@ string extractTexture(uint8_t* fileData, TextureNode texData)
 
 vector<vertHelper> extractVertices(uint8_t* fileData, VertexNode bvd)
 {
-	vertDataHeader vdh;
-	memcpy(&vdh, &fileData[bvd.offset], sizeof(vertDataHeader));
+	DataHeader vdh;
+	memcpy(&vdh, &fileData[bvd.offset.offset], sizeof(DataHeader));
 	
 	vector<vertHelper> vertices;
 	
@@ -317,7 +301,7 @@ vector<vertHelper> extractVertices(uint8_t* fileData, VertexNode bvd)
 	{
 		if(bvd.flags == VERT_DATA_WEIGHT_UV)
 		{
-			uint32_t offset = bvd.offset+sizeof(vertDataHeader)+i*sizeof(vertEntryWeightUV);
+			uint32_t offset = bvd.offset.offset+sizeof(DataHeader)+i*sizeof(vertEntryWeightUV);
 			
 			vertEntryWeightUV ve;
 			memcpy(&ve, &fileData[offset], sizeof(vertEntryWeightUV));
@@ -333,7 +317,7 @@ vector<vertHelper> extractVertices(uint8_t* fileData, VertexNode bvd)
 		}
 		else if(bvd.flags == VERT_DATA_WEIGHT_TAN_UV)
 		{
-			uint32_t offset = bvd.offset+sizeof(vertDataHeader)+i*sizeof(vertEntryWeightTanUV);
+			uint32_t offset = bvd.offset.offset+sizeof(DataHeader)+i*sizeof(vertEntryWeightTanUV);
 			
 			vertEntryWeightTanUV ve;
 			memcpy(&ve, &fileData[offset], sizeof(vertEntryWeightTanUV));
@@ -355,14 +339,14 @@ vector<vertHelper> extractVertices(uint8_t* fileData, VertexNode bvd)
 
 vector<faceIndex> extractFaces(uint8_t* fileData, FaceNode bfd)
 {	
-	faceDataHeader fdh;
-	memcpy(&fdh, &fileData[bfd.offset], sizeof(faceDataHeader));
+	DataHeader fdh;
+	memcpy(&fdh, &fileData[bfd.offset.offset], sizeof(DataHeader));
 	vector<faceIndex> faces;
 	
 	for(uint32_t i = 0; i < bfd.numIndices / 3; i++)
 	{
 		faceIndex fi;
-		memcpy(&fi, &fileData[bfd.offset+sizeof(faceDataHeader)+i*sizeof(faceIndex)], sizeof(faceIndex));
+		memcpy(&fi, &fileData[bfd.offset.offset+sizeof(DataHeader)+i*sizeof(faceIndex)], sizeof(faceIndex));
 		
 		faces.push_back(fi);
 	}
@@ -377,7 +361,7 @@ vector<BoneMatrix> extractBones(uint8_t* fileData, BoneNode bn)
 	for(uint32_t i = 0; i < bn.numBones; i++) 
 	{
 		BoneMatrix bm;
-		memcpy(&bm, &fileData[bn.offset+i*sizeof(BoneMatrix)+sizeof(DataHeader)], sizeof(BoneMatrix));
+		memcpy(&bm, &fileData[bn.offset.offset+i*sizeof(BoneMatrix)+sizeof(DataHeader)], sizeof(BoneMatrix));
 		
 		ret.push_back(bm);
 		//TODO Store matrix
@@ -391,11 +375,18 @@ vector<BoneMatrix> extractBones(uint8_t* fileData, BoneNode bn)
 			 << "bone.transform(matrix)" << endl;*/
 			 
 		//for(int j = 0; j < 16; j++)
-			//fwrite(&fileData[bn.offset+i*sizeof(BoneMatrix)+sizeof(DataHeader)], 1, sizeof(BoneMatrix), fp);
+			//fwrite(&fileData[bn.offset.offset+i*sizeof(BoneMatrix)+sizeof(DataHeader)], 1, sizeof(BoneMatrix), fp);
 		
 	}
 	//fclose(fp);
 	return ret;
+}
+
+string extractBoneName(uint8_t* fileData, BoneNameNode bnn)
+{
+	string s = (const char*)&fileData[bnn.boneNameOffset.offset+sizeof(DataHeader)];
+	cout << "bone name: " << s << endl;
+	return s;
 }
 
 //Global vars for use while decompressing
@@ -405,6 +396,7 @@ map<uint64_t, vector<faceIndex> > faces;
 map<uint64_t, vector<vertHelper> > vertices;
 vector<ObjMapNode> objects;
 vector<vector<BoneMatrix> > bones;
+vector<string> boneNames;
 
 void outputObj(string filename)
 {
@@ -482,6 +474,22 @@ void outputObj(string filename)
 		
 		fclose(fp);
 	}
+	
+	//Spit out bone names
+	ostringstream oss;
+	oss << filename << ".bonenames";
+	cout << "Saving bone names " << oss.str() << endl;
+	FILE* fp = fopen(oss.str().c_str(), "wb");
+	uint32_t sz = boneNames.size();
+	fwrite(&sz, 1, sizeof(uint32_t), fp);
+	for(uint32_t i = 0; i < sz; i++)
+	{
+		uint32_t len = boneNames[i].size();
+		fwrite(&len, 1, sizeof(uint32_t), fp);
+		for(uint32_t j = 0; j < len; j++)
+			fwrite(&boneNames[i][j], 1, 1, fp);
+	}
+	fclose(fp);
 }
 
 void readNode(uint8_t* fileData, uint64_t nodeOffset, int numTabs)
@@ -552,7 +560,7 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, int numTabs)
 			CollisionNode cn;
 			memcpy(&cn, &fileData[nodeOffset + sizeof(Node)], sizeof(CollisionNode));
 			
-			uint8_t* str = &fileData[cn.nameOffset + sizeof(stringHeader)];
+			uint8_t* str = &fileData[cn.offset.offset + sizeof(DataHeader)];
 			cout << "Collision node name: " << str << endl;
 			break;
 		}
@@ -562,7 +570,7 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, int numTabs)
 			ObjDataNode odn;
 			memcpy(&odn, &fileData[nodeOffset + sizeof(Node)], sizeof(ObjDataNode));
 			
-			uint8_t* str = &fileData[odn.dataNameOffset + sizeof(stringHeader)];
+			uint8_t* str = &fileData[odn.dataNameOffset.offset + sizeof(DataHeader)];
 			cout << "Obj data name: " << str << endl;
 			break;
 		}
@@ -573,6 +581,16 @@ void readNode(uint8_t* fileData, uint64_t nodeOffset, int numTabs)
 			memcpy(&bn, &fileData[nodeOffset + sizeof(Node)], sizeof(BoneNode));
 			
 			bones.push_back(extractBones(fileData, bn));
+			break;
+		}
+		
+		case NODE_TYPE_BONE_NAME:
+		{
+			BoneNameNode bnn;
+			memcpy(&bnn, &fileData[nodeOffset + sizeof(Node)], sizeof(BoneNameNode));
+			
+			boneNames.push_back(extractBoneName(fileData, bnn));
+			break;
 		}
 		
 		default:
