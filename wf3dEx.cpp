@@ -90,7 +90,7 @@ typedef struct {
 	uint64_t objHash;	//Matches ObjTextureNode objHash
 	uint64_t vertHash;	//Matches VertexNode hash
 	uint64_t faceHash;	//Matches FaceNode hash
-	uint64_t unkHash2[3];
+	float unk[6];
 } ObjMapNode;
 
 typedef struct {
@@ -385,7 +385,7 @@ vector<BoneMatrix> extractBones(uint8_t* fileData, BoneNode bn)
 string extractBoneName(uint8_t* fileData, BoneNameNode bnn)
 {
 	string s = (const char*)&fileData[bnn.boneNameOffset.offset+sizeof(DataHeader)];
-	cout << "bone name: " << s << endl;
+	//cout << "bone name: " << s << endl;
 	return s;
 }
 

@@ -1,36 +1,37 @@
 wfLZEx
 ======
 
-Simple compression/decompression program for a friend that uses wflz to strip PNG images out of .anb archives.
-Designed to work with archive files from DuckTales: Remastered, but for all I know it'll work with other WayForward games as well.
+Simple compression/decompression program that uses wflz to strip PNG images out of WayForward animation (.anb) archives.
+Designed to work with archive files from DuckTales: Remastered and Shantae: Half-Genie Hero, but it may work with other WayForward titles designed around the same timeframe as well.
 
-Internally, the images are stored in a fancy proprietary DXT-1 format, described here: http://files.wayforward.com/shane/rgbv/
+Internally, the images are stored in a DXT1 or DXT5 format with separate color and multiply channels, described here: http://files.wayforward.com/shane/rgbv/
 
-WayForward's format splits images into pieces and jumbles them up like a jigsaw puzzle so that they'll compress better. This program attempts to reconstruct the original images from these pieces. There are some rounding errors that get introduced in the process, so the output images may not be 100% correct (Though from what I've tested, the artifacts aren't noticable unless you reconstruct color/multiply images seperately). If perfect accuracy is important to you, you may want to pass along the commandline flag "-nopiece" and reconstruct the images by hand.
+WayForward's format splits images into pieces and jumbles them up like a jigsaw puzzle so that they'll compress better. This program reconstructs the original images from these pieces and stitches the images together into spritesheets based on animation sequences.
 
 Usage:
 wfLZEx.exe [flags] [filenames.anb]
 
 Commandline flags:
 
--dxt1
-Treat images as if they're DXT1-compressed (default)
+--help
+Display program usage
 
--dxt3
-Treat images as if they're DXT3-compressed (probably won't produce valid output)
+--icon
+Output a 148x125 TSR-friendly icon along with each sheet
 
--dxt5
-Treat images as if they're DXT5-compressed (probably won't produce valid output)
+--col-only
+Only output color images as described in above link
 
--separate
-Output separate images for color and multiply (default is off)
+--mul-only
+Only output multiply images as described in above link
 
--col-only
-Same as above, but only output color images
+--no-sheet
+Don't stitch images into sheets. Instead, output frames into subfolders by animation ID
 
--mul-only
-same as -separate, but only output multiply images
+wf3dEx
+======
 
--nopiece
-Don't attempt to reconstruct images from image piece data (default: attempt to reconstruct images)
+Extract texture, mesh, and bone data from WayForward 3D model (.wf3d) files. Tested with files from Shantae: Half-Genie Hero.
 
+Usage:
+wf3dEx.exe [filenames.wf3d]
