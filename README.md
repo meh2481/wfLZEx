@@ -1,7 +1,7 @@
 wfLZEx
 ======
 
-Simple compression/decompression program that uses wflz to strip PNG images out of WayForward animation (.anb) archives.
+Simple decompression program that uses wflz to strip PNG images out of WayForward animation (.anb) archives.
 Designed to work with archive files from DuckTales: Remastered and Shantae: Half-Genie Hero, but it may work with other WayForward titles designed around the same timeframe as well.
 
 Internally, the images are stored in a DXT1 or DXT5 format with separate color and multiply channels, described here: http://files.wayforward.com/shane/rgbv/
