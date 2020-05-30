@@ -1,5 +1,9 @@
 .directory
 wfLZEx
+Debug/
+ipch/
+*.VC.db
+*.VC.opendb
 
 # Object files
 *.o
