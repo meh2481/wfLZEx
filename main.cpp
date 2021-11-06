@@ -149,6 +149,7 @@ typedef struct
 
 #define PALETTE_SIZE					256
 
+#define TEXTURE_TYPE_B8G8R8A8           0   //8 bit per channel
 #define TEXTURE_TYPE_256_COL			1	//256-color 4bpp palette followed by pixel data
 #define TEXTURE_TYPE_DXT1_COL			2	//squish::kDxt1 color, no multiply
 #define TEXTURE_TYPE_DXT5_COL			3	//squish::kDxt5 color, no multiply
@@ -541,6 +542,18 @@ int splitImages(const char* cFilename)
             }
 
             bUseMul = true;
+        }
+        else if (th.type == TEXTURE_TYPE_B8G8R8A8)
+        {
+            color = (uint8_t*)malloc(th.width * th.height * 4);
+            uint8_t* cur_color_ptr = color;
+            for (uint32_t curPixel = 0; curPixel < th.width * th.height; curPixel++)
+            {
+                *cur_color_ptr++ = dst[curPixel * 4 + 2];
+                *cur_color_ptr++ = dst[curPixel * 4 + 1];
+                *cur_color_ptr++ = dst[curPixel * 4];
+                *cur_color_ptr++ = dst[curPixel * 4 + 3];
+            }
         }
         else
         {
