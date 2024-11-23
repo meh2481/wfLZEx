@@ -1,24 +1,27 @@
-SHELL=C:/Windows/System32/cmd.exe
 objects = main.o wfLZ.o
-o3d = wf3dEx.o wfLZ.o
-LIBPATH = -L./lib
-LIB = -lsquish -lFreeImage
+LIBPATH = -L./lib/linux64
+LIB = -lsquish -lfreeimage
 HEADERPATH = -I./include
 STATICGCC = -static-libgcc -static-libstdc++
 
-all : wfLZEx.exe wf3dEx.exe
- 
-wfLZEx.exe : $(objects)
-	g++ -Wall -O2 -s -o $@ $(objects) $(LIBPATH) $(LIB) $(STATICGCC) $(HEADERPATH)
+ifeq ($(BUILD),release)
+# "Release" build - optimization, and no debug symbols
+	CXXFLAGS += -O2 -Os -s -DNDEBUG -fPIE -fopenmp
+else
+# "Debug" build - no optimization, and debugging symbols
+	CXXFLAGS += -g -ggdb -DDEBUG -fPIE -fopenmp
+endif
 
-wf3dEx.exe : $(o3d)
-	g++ -Wall -O2 -s -o $@ $(o3d) $(LIBPATH) $(LIB) $(STATICGCC) $(HEADERPATH)
-	
+all : wfLZEx
+
+wfLZEx : $(objects)
+	g++ $(CXXFLAGS) -o $@ $(objects) $(LIBPATH) $(LIB) $(STATICGCC) $(HEADERPATH)
+
 %.o: %.cpp
-	g++ -O2 -c -MMD -s -o $@ $< $(HEADERPATH)
+	g++ $(CXXFLAGS) -c -MMD -o $@ $< $(HEADERPATH)
 
 -include $(objects:.o=.d)
 
 .PHONY : clean
 clean :
-	rm -rf wfLZEx.exe *.o *.d
+	rm -rf wfLZEx *.o *.d

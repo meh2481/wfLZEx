@@ -14,6 +14,8 @@
 #include <cmath>
 #include <cstring>
 #include <iomanip>
+#define ETCDEC_IMPLEMENTATION 1
+#include "etcdec.h"
 using namespace std;
 
 #define MAJOR 3
@@ -163,7 +165,8 @@ void make_folder(string folderName)
     CreateDirectory(TEXT(folderName.c_str()), NULL);
 #else
     ostringstream oss;
-    oss << "mkdir -p" << folderName;	//So this can pwn your system if the folder name is formatted correctly. Don't care
+    oss << "mkdir -p " << folderName;	//So this can pwn your system if the folder name is formatted correctly. Don't care
+    cout << oss.str() << endl;
     system(oss.str().c_str());
 #endif
 }
@@ -349,6 +352,20 @@ void create_icon(FIBITMAP* baseImage, string sName)
     FreeImage_Unload(iconImg);
 }
 
+void decompressETC(uint8_t* src, uint8_t* dst, int width, int height)
+{
+    char* uncompData = (char*) dst;
+
+    for (int i = 0; i < height; i += 4) {
+        for (int j = 0; j < width; j += 4) {
+            dst = (uint8_t*) uncompData + (i * width + j) * 4;
+            etcdec_etc_rgb(src, dst, width * 4);
+            src += ETCDEC_ETC_RGB_BLOCK_SIZE;
+        }
+    }
+
+}
+
 int splitImages(const char* cFilename)
 {
     uint8_t* fileData;
@@ -476,6 +493,7 @@ int splitImages(const char* cFilename)
         bool bUseMul = false;
         if(th.type == TEXTURE_TYPE_DXT1_COL_MUL)
         {
+            cout << "Decomp type: " << th.type << endl;
             //Create color image
             if(!g_bMulOnly)
             {
@@ -490,18 +508,48 @@ int splitImages(const char* cFilename)
                 squish::DecompressImage(mul, th.width, th.height, dst + decompressedSize / 2, squish::kDxt1);	//Second image starts halfway through decompressed data
             }
         }
-        else if(th.type == TEXTURE_TYPE_DXT1_COL)
-        {
-            color = (uint8_t*)malloc(decompressedSize * 8);
-            squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
-        }
-        else if(th.type == TEXTURE_TYPE_DXT5_COL)
+        // else if(th.type == TEXTURE_TYPE_DXT1_COL)
+        // {
+            // color = (uint8_t*)malloc(decompressedSize * 8);
+            // squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt1);
+
+            //-----------------------------------------------------
+
+            // color = (uint8_t*)malloc(decompressedSize * 8);
+            // decompressETC(dst, color, th.width, th.height);
+
+            // mul = (uint8_t*)malloc(decompressedSize * 8);
+            // decompressETC(dst + decompressedSize / 2, mul, th.width, th.height);
+
+
+            //-----------------------------------------------------
+
+
+            // char* uncompData = (char*)malloc(th.width * th.height * 4);
+            // char* compData = (char*)dst;
+            // char* dst1;
+            // char* src;
+
+            // src = compData;
+            // dst1 = uncompData;
+
+            // for (int i = 0; i < th.height; i += 4) {
+            //     for (int j = 0; j < th.width; j += 4) {
+            //         dst1 = uncompData + (i * th.width + j) * 4;
+            //         etcdec_etc_rgb(src, dst1, th.width * 4);
+            //         src += ETCDEC_ETC_RGB_BLOCK_SIZE;
+            //     }
+            // }
+            // color = (uint8_t*) uncompData;
+        // }
+        else if(th.type == TEXTURE_TYPE_DXT5_COL || th.type == TEXTURE_TYPE_DXT1_COL)
         {
             color = (uint8_t*)malloc(th.width * th.height * 4);
-            squish::DecompressImage(color, th.width, th.height, dst, squish::kDxt5);
+            decompressETC(dst, color, th.width, th.height);
         }
         else if(th.type == TEXTURE_TYPE_256_COL)
         {
+            cout << "Decomp type: " << th.type << endl;
             //Read in palette
             vector<pixel> palette;
             uint8_t* cur_data_ptr = dst;
@@ -529,6 +577,7 @@ int splitImages(const char* cFilename)
         }
         else if(th.type == TEXTURE_TYPE_DXT5_COL_DXT1_MUL)
         {
+            cout << "Decomp type: " << th.type << endl;
             if(!g_bMulOnly)
             {
                 color = (uint8_t*)malloc(th.width * th.height * 4);
@@ -545,6 +594,7 @@ int splitImages(const char* cFilename)
         }
         else if (th.type == TEXTURE_TYPE_B8G8R8A8)
         {
+            cout << "Decomp type: " << th.type << endl;
             color = (uint8_t*)malloc(th.width * th.height * 4);
             uint8_t* cur_color_ptr = color;
             for (uint32_t curPixel = 0; curPixel < th.width * th.height; curPixel++)
